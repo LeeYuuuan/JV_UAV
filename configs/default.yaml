@@ -1,0 +1,15 @@
+map_width: 2400.0
+map_height: 2400.0
+
+lower_step_seconds: 60.0
+max_movement_seconds: 30.0
+uav_speed_mps: 6.0
+
+movement_power_w: 257.0
+hover_power_w: 326.0
+battery_capacity_wh: 125.0
+
+coverage_radius: 86.6
+arrival_rate: 0.5
+
+full_clear_service: true

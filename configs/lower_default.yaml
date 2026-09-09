@@ -1,0 +1,55 @@
+seeds:
+  map_seed: 42
+  world_dyn_seed: 43
+
+world:
+  size: 2400.0
+  airship_pos: [1200.0, 1200.0]
+
+users:
+  num_users: 50
+  lam: 0.1
+  n_clusters: 3
+  cluster_ratio: 0.8
+  cluster_std: 180.0
+  cold_start_dt: 60.0
+
+uav:
+  max_uavs: 6
+  init_battery: 1.0
+  speed: 6.0
+  move_limit: 180.0
+  coverage_radius: 86.6
+
+time:
+  high_steps: 100
+  low_steps_per_high: 10
+  low_step_sec: 60.0
+  max_move_sec: 30.0
+
+energy:
+  P_horiz: 257.0
+  P_hover: 326.0
+  battery_capacity_Wh: 125.0
+  deduct_in_low_env: true
+  reserve_frac: 0.05
+
+service:
+  mode: full_clear
+
+reward:
+  collect_weight: 1.0
+  backlog_weight: 1.0
+  oob_penalty: 500.0
+  oob_penalty_scale: 5.0
+  safety_weight: 0.0
+  safety_threshold: 0.0
+
+obs:
+  normalize_last_visit: false
+  last_visit_norm: 1000.0
+  normalize_positions: false
+  include_uav_id: true
+
+env:
+  initial_serving_ids: [0, 1]
