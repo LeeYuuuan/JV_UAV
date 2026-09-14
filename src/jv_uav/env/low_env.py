@@ -319,7 +319,7 @@ class VariableUAVLowEnv:
         return {
             "global_obs": last_visit,
             "active_uav_obs": np.concatenate(features, axis=1).astype(
-                np.float32
+                np.float32s
             ),
             "active_uav_ids": ids,
             "uav_status": self.scene.uav_status.copy(),
