@@ -232,3 +232,24 @@ Unbounded negative backlog costs with early termination can still reward early
 failure over long survival. The lower coverage reward coefficient also differs
 substantially from the old Transformer implementation. Reward redesign remains
 pending confirmation; longer training alone does not resolve it.
+
+## Live training curves
+
+`training_curves.png` in the run output directory is overwritten every 100 upper
+frames by default, and on normal completion or keyboard interruption. Set
+`plot_every_frames` in the training YAML or pass `--plot-every 500` to change the
+interval; `--plot-every 0` disables plotting. The CLI override works on resume.
+Rendering uses the noninteractive Agg canvas and requires no server display.
+
+The four panels show completed-episode upper reward sum, time-average maximum
+buffer after collection, worst maximum buffer, and actual lower-step length
+with death terminations marked. Backlog statistics use all post-service lower
+steps in the episode and exclude cold start. Raw values and a 10-episode moving
+average are drawn. Unfinished episodes are not plotted as finished returns.
+
+`training_curves.json` stores the compact episode history; `train.jsonl` remains
+the full frame log. Resume reloads history up to the checkpoint frame and imports
+history from the checkpoint's directory when using a new output directory.
+Older logs can recover episode returns, but missing full-episode backlog values
+are left blank rather than estimated from frame-end values. These plots are
+training curves; seed-specific evaluation dashboards remain separate.

@@ -137,11 +137,21 @@ class JointTrainer:
             if self.slow_phase:
                 for _ in range(self.cfg["late_sac_updates_per_mappo"]):
                     self._sac_update()
+        episode_metrics = None
+        if done:
+            backlog = np.asarray(self.env.trace.backlog_max_post_timeline[1:])
+            episode_metrics = {
+                "mean_max_backlog": float(backlog.mean()),
+                "peak_max_backlog": float(backlog.max()),
+                "low_steps": self.env.scene.low_step_total,
+                "frames": len(self.env.trace.frames),
+            }
         return {
             "upper_steps": self.upper_steps, "low_steps": self.low_steps,
             "sac_updates": self.sac_updates, "mappo_updates": self.mappo_updates,
             "phase": "slow" if self.slow_phase else "early", "episodes": self.episodes,
             "upper_reward": reward, "episode_return": self.episode_return,
+            "episode_metrics": episode_metrics,
             "terminated": bool(terminated), "truncated": bool(truncated),
             "mappo_updated": updated, "replay_size": len(self.replay),
             "pending_transition": self.pending is not None,
