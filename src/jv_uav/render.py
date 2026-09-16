@@ -31,6 +31,8 @@ def render_env(
     ``view`` is ``dashboard`` or ``heatmaps``. Map sensor colors show raw
     ``backlog`` (packets) or ``last_visit`` (minutes). Trajectories include only
     recorded frames; dashed segments are settled returns, not sampled paths.
+    Coverage circles include every serving endpoint in the displayed frames;
+    these are discrete geometric footprints, not continuous in-flight service.
     Heatmap grids retain the recorder's geometric footprint semantics.
     Returns the Figure; with show=False it is closed after optional saving.
     """
@@ -117,25 +119,39 @@ def _airship(ax, scene):
 
 
 def _dashboard(fig, env, sensor_value, trail_frames, draw_coverage):
+    from matplotlib.collections import PatchCollection
     from matplotlib.lines import Line2D
     from matplotlib.patches import Circle, Patch
     scene, trace = env.scene, env.trace
     gs = fig.add_gridspec(3, 2, left=0.06, right=0.95, bottom=0.13, top=0.765, width_ratios=[1.04, 1], height_ratios=[1, 1, 0.95], hspace=0.64, wspace=0.25)
     ax_map = fig.add_subplot(gs[:2, 0])
-    _map_axes(ax_map, scene, f"01  Flight map  /  last {min(trail_frames, len(trace.frames))} frames")
+    frames = trace.frames[-trail_frames:] if trail_frames else []
+    shown_steps = sum(round(frame.duration_sec / scene.low_step_sec) for frame in frames)
+    _map_axes(ax_map, scene, f"01  Flight map  /  {len(frames)} frames, {shown_steps} low steps")
     values = scene.sensor_backlog if sensor_value == "backlog" else scene.sensor_last_visit_sec / 60
     label = "Current backlog / packets" if sensor_value == "backlog" else "Time since service / min"
     sc = ax_map.scatter(scene.sensor_pos[:, 0], scene.sensor_pos[:, 1], c=values, s=15, cmap="YlOrBr", vmin=0, vmax=max(float(values.max()), 1.0), edgecolors="none", alpha=0.9, zorder=2)
     cb = fig.colorbar(sc, ax=ax_map, fraction=0.035, pad=0.025)
     cb.set_label(label, fontsize=8)
     cb.outline.set_visible(False)
-    frames = trace.frames[-trail_frames:] if trail_frames else []
+    footprints, footprint_colors = [], []
     for frame in frames:
         for uav in frame.uavs:
             path = np.asarray(uav.trajectory_xy_m)
+            if draw_coverage and uav.role_during_frame == "SERVING":
+                # The first point is the frame start, not an extra service step.
+                for endpoint in path[1:]:
+                    footprints.append(Circle(endpoint, float(scene.cfg["uavs"]["coverage_radius_m"])))
+                    footprint_colors.append(UAV_COLORS[uav.uav_id % len(UAV_COLORS)])
             if len(path) > 1:
                 returning = uav.role_during_frame in {"WAITING", "CHARGING"}
                 ax_map.plot(path[:, 0], path[:, 1], "--" if returning else "-", color=UAV_COLORS[uav.uav_id % len(UAV_COLORS)], linewidth=1.6, alpha=0.65, zorder=3)
+    if footprints:
+        historical = PatchCollection(footprints, facecolors=footprint_colors,
+                                     edgecolors=footprint_colors, linewidths=0.35,
+                                     alpha=0.055, zorder=1)
+        historical.set_gid("historical_coverage")
+        ax_map.add_collection(historical)
     for uid in range(scene.num_uavs):
         color = UAV_COLORS[uid % len(UAV_COLORS)]
         status = int(scene.uav_status[uid])
@@ -152,7 +168,10 @@ def _dashboard(fig, env, sensor_value, trail_frames, draw_coverage):
     at_base = np.flatnonzero(np.linalg.norm(scene.uav_pos - scene.airship_pos, axis=1) < 1e-4)
     if at_base.size:
         ax_map.text(0.98, 0.98, "At airship: " + ", ".join(f"U{i}" for i in at_base), transform=ax_map.transAxes, ha="right", va="top", fontsize=7, color=MUTED, bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "none", "pad": 3})
-    ax_map.legend(handles=[Line2D([], [], color=INK, lw=1.5, label="Service path"), Line2D([], [], color=INK, ls="--", label="Settled return")], loc="upper left", fontsize=7, framealpha=0.9)
+    legend = [Line2D([], [], color=INK, lw=1.5, label="Service path"), Line2D([], [], color=INK, ls="--", label="Settled return")]
+    if draw_coverage:
+        legend.append(Patch(facecolor=UAV_COLORS[0], alpha=0.2, label="Each step's footprint"))
+    ax_map.legend(handles=legend, loc="upper left", fontsize=7, framealpha=0.9)
 
     ax = fig.add_subplot(gs[0, 1])
     _style_axes(ax, "02  Sensor backlog")

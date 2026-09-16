@@ -62,3 +62,17 @@ def test_final_return_failure_is_settled_and_reported():
     assert env.trace.frames[-1].termination_reason == "cannot_return_to_airship"
     fig = env.render(show=False, dpi=65)
     assert any("cannot return to airship" in text.get_text() for text in fig.texts)
+
+
+def test_history_coverage_includes_only_serving_step_endpoints():
+    _, scene, _, _, env = build_env()
+    env.reset()
+    env.step(np.array([1, 1, 0, 0, 0, 0]))
+    env.step(np.array([0, 0, 1, 1, 0, 0]))
+    for trail, count in [(1, 40), (2, 80)]:
+        fig = env.render(show=False, trail_frames=trail, dpi=65)
+        history = [c for c in fig.axes[0].collections if c.get_gid() == 'historical_coverage']
+        assert len(history) == 1 and len(history[0].get_paths()) == count
+        assert f'{trail * 10} low steps' in fig.axes[0].get_title(loc='left')
+    fig = env.render(show=False, draw_coverage=False, dpi=65)
+    assert not any(c.get_gid() == 'historical_coverage' for c in fig.axes[0].collections)
