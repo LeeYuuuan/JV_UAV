@@ -14,7 +14,10 @@ build. Commands below run from the project root.
 # A short engineering check; this does not train a converged policy.
 python train_joint.py --smoke --device cuda --output runs/smoke
 
-# Full-size networks, 1000 additional upper decisions.
+# Default full training: 500000 upper frames (5000 full-length episodes).
+python train_joint.py --device cuda --output runs/joint_full
+
+# Bounded run: 1000 additional upper decisions.
 python train_joint.py --device cuda --upper-steps 1000 --output runs/joint_001
 
 # Resume models, optimizers, replay, counters, RNG, scene and partial rollout.
@@ -30,7 +33,36 @@ training/environment configuration; CLI config paths do not override it.
 `--smoke` changes network sizes, horizon, warm-up and update threshold only in
 memory. It never rewrites the default YAML files.
 
+## Training budget
+
+The default new run collects 500000 upper frames. Each episode lasts at most
+100 frames, with 10 lower steps per complete frame. This is equivalent to 5000
+full-length episodes and at most 5000000 lower steps. UAV deaths end episodes
+early, so the actual episode count can be higher. The frame budget stays fixed
+across episode resets and allows 5000 MAPPO update calls from a fresh run.
+
+This is an initial training budget, not a convergence guarantee. Compare the
+fixed-seed evaluation returns, backlog and survival across checkpoints before
+deciding whether more training is useful. The SAC frequency switch remains at
+250000 successful SAC updates. Evaluation/checkpoint cadence is unchanged.
+
+An already running process keeps its loaded settings. Old checkpoints also
+retain their saved budget; changing the YAML does not override resume settings.
+To continue to a cumulative target of 500000 frames, pass `--upper-steps` equal
+to 500000 minus the checkpoint's `upper_steps` counter.
+
 ## Confirmed schedule
+
+Console summaries use aligned columns and appear every 50 upper frames by default,
+counted across episode resets from the start of each invocation. Set
+`log_every_frames` in `configs/training.yaml` or pass `--log-every 20` (also supported
+with `--resume`). Older checkpoints without this setting default to 50.
+The last partial interval is printed on normal completion. `avgN_reward` is the
+mean upper reward over the N frames since the previous line; `avgN_max_backlog`
+is the mean frame-end maximum backlog. `dead` counts UAV deaths in that interval;
+`ep` counts completed episodes. SAC/MAPPO counters are cumulative update calls.
+Full per-frame data still goes to `train.jsonl`; evaluation and checkpoint
+intervals are unchanged. Evaluation summaries are printed separately.
 
 All values are configurable in `configs/training.yaml`:
 

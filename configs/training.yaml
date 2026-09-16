@@ -1,6 +1,8 @@
 # Upper rollout steps are environment frames, accumulated across episode resets.
 seed: 123
-total_upper_steps: 100000
+# Equivalent to 4000 full-length episodes of 100 frames.
+total_upper_steps: 400000
+log_every_frames: 50
 upper_rollout_steps: 100
 switch_after_sac_updates: 250000
 early_sac_updates_per_step: 1

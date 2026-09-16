@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import sys
+from time import monotonic
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -17,6 +18,22 @@ from jv_uav import load_config
 from jv_uav.rl.trainer import JointTrainer
 
 
+def format_progress(rows, elapsed):
+    """Summarize the frames since the previous console line."""
+    last = rows[-1]
+    count = len(rows)
+    reward = sum(row["upper_reward"] for row in rows) / count
+    backlog = sum(row["system_max_backlog"] for row in rows) / count
+    deaths = sum(len(row["dead_ids"]) for row in rows)
+    return (
+        f"frame {last['upper_steps']:07d} | ep {last['episodes']:05d} | "
+        f"low_steps {last['low_steps']:08d} | avg{count}_reward {reward:9.2f} | "
+        f"avg{count}_max_backlog {backlog:9.2f} | dead {deaths:3d} | "
+        f"SAC {last['sac_updates']:07d} | MAPPO {last['mappo_updates']:05d} | "
+        f"{last['phase']:5s} | elapsed {elapsed / 60:7.1f}m"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-config", type=Path, default=ROOT / "configs/default.yaml")
@@ -24,11 +41,14 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--upper-steps", type=int, help="Additional upper environment steps in this invocation.")
+    parser.add_argument("--log-every", type=int, help="Console summary interval in upper frames (default: config or 50); also overrides resume settings.")
     parser.add_argument("--resume", type=Path, help="Resume this project's trusted checkpoint, including replay and pending transitions.")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--smoke", action="store_true", help="Small networks, six upper steps and a low switch threshold; not convergence training.")
     parser.add_argument("--threads", type=int, default=1, help="PyTorch CPU threads; one is efficient for the small smoke networks.")
     args = parser.parse_args()
+    if args.log_every is not None and args.log_every <= 0:
+        parser.error("log-every must be positive")
     if args.threads <= 0 or (args.upper_steps is not None and args.upper_steps <= 0):
         parser.error("threads and upper-steps must be positive")
     if args.smoke and args.resume:
@@ -55,6 +75,10 @@ def main():
             cfg["mappo"].update(hidden=32, epochs=2, minibatch_frames=2)
         trainer = JointTrainer(env_cfg, cfg, device)
     cfg = trainer.cfg
+    log_every = args.log_every if args.log_every is not None else cfg.get("log_every_frames", 50)
+    if isinstance(log_every, bool) or not isinstance(log_every, int) or log_every <= 0:
+        parser.error("log_every_frames must be a positive integer")
+    cfg["log_every_frames"] = log_every
     if cfg["checkpoint_every_mappo"] < 0 or cfg["evaluate_every_mappo"] < 0:
         parser.error("checkpoint/evaluation intervals cannot be negative")
     (output / "resolved_config.json").write_text(json.dumps({"environment": trainer.env_cfg, "training": cfg, "device": device}, indent=2), encoding="utf-8")
@@ -63,21 +87,33 @@ def main():
         summaries = []
         for seed in cfg["evaluation_seeds"]:
             summaries.append(trainer.evaluate(seed, output / label / f"seed_{seed}"))
-        print(json.dumps({"evaluation": label, "results": summaries}), flush=True)
+        for summary in summaries:
+            print(
+                f"  eval {label} | seed {summary['seed']} | "
+                f"return {summary['upper_return']:10.2f} | "
+                f"avg_max_backlog {summary['mean_max_backlog']:9.2f} | "
+                f"frames {summary['frames']:4d} | dead {len(summary['dead_ids']):2d}",
+                flush=True,
+            )
 
     if args.eval_only:
         evaluate(f"eval_{trainer.upper_steps:08d}")
         return
     steps = args.upper_steps or cfg["total_upper_steps"]
-    print(json.dumps({"device": device, "additional_upper_steps": steps, "switch_after_sac_updates": cfg["switch_after_sac_updates"], "upper_rollout_steps": cfg["upper_rollout_steps"], "output": str(output.resolve())}), flush=True)
+    print(f"Joint SAC + MAPPO | device {device} | additional frames {steps} | log every {log_every} frames", flush=True)
+    print(f"Output: {output.resolve()}", flush=True)
+    started = monotonic()
+    console_rows = []
     try:
         with (output / "train.jsonl").open("a", encoding="utf-8") as log:
             for _ in range(steps):
                 row = trainer.step()
                 log.write(json.dumps(row, allow_nan=False) + "\n")
                 log.flush()
-                if row["mappo_updated"] or row["terminated"] or row["truncated"]:
-                    print(json.dumps(row, allow_nan=False), flush=True)
+                console_rows.append(row)
+                if len(console_rows) >= log_every:
+                    print(format_progress(console_rows, monotonic() - started), flush=True)
+                    console_rows.clear()
                 if row["mappo_updated"]:
                     interval = cfg["checkpoint_every_mappo"]
                     if interval and trainer.mappo_updates % interval == 0:
@@ -90,6 +126,8 @@ def main():
         # rather than saving inconsistent policy/rollout state mid-step.
         print("Interrupted. Resume the last completed checkpoint; the active frame was not saved.", flush=True)
         return
+    if console_rows:
+        print(format_progress(console_rows, monotonic() - started), flush=True)
     trainer.save(output / "checkpoint.pt")
     evaluate(f"eval_{trainer.upper_steps:08d}")
     print(f"Saved checkpoint: {(output / 'checkpoint.pt').resolve()}", flush=True)
