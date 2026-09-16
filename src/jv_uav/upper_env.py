@@ -82,8 +82,15 @@ class UpperEnv:
 
         dead_ids = self.scene.dead_ids()
         serving_count = int(np.sum(plan.assigned_status == int(UAVStatus.SERVING)))
+        # Final-step return infeasibility is penalized only at the lower level.
+        lower_failure_ids = {
+            int(uav_id)
+            for step in low_frame.steps
+            for uav_id in step.return_unsafe_ids
+        }
+        upper_dead_count = sum(int(uav_id) not in lower_failure_ids for uav_id in dead_ids)
         reward, reward_terms = self.upper_reward(
-            serving_count, low_frame.mean_system_max_post_service, len(dead_ids)
+            serving_count, low_frame.mean_system_max_post_service, upper_dead_count
         )
         self.trace.frames.append(self._make_frame_record(plan, low_frame))
 
@@ -100,6 +107,12 @@ class UpperEnv:
             "trace": self.trace,
         }
         return observation, reward, terminated, truncated, info
+
+    def render(self, **kwargs):
+        """Draw the current scene and trace; see render_env for options."""
+        from .render import render_env
+
+        return render_env(self, **kwargs)
 
     def _make_frame_record(self, plan: FramePlan, low_frame: Any) -> FrameRecord:
         records: list[UAVFrameRecord] = []
@@ -148,4 +161,10 @@ class UpperEnv:
             system_max_post_service_mean=float(np.mean(max_values)) if max_values else 0.0,
             system_mean_post_service_mean=float(np.mean(mean_values)) if mean_values else 0.0,
             uavs=records,
+            settled=low_frame.completed_all_steps,
+            termination_reason=low_frame.termination_reason or (
+                "return_failed_during_settlement"
+                if np.any(plan.return_failure_mask) and low_frame.completed_all_steps
+                else None
+            ),
         )

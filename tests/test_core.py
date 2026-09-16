@@ -118,4 +118,4 @@ def test_last_low_step_marks_return_unsafe_and_penalizes_it():
     assert len(info["low_frame"].steps) == 10
     assert terminated
     assert last.return_unsafe_ids.size == scene.num_uavs
-    assert last.reward_terms["death"] < 0.0
+    assert last.reward_terms["return_failure"] < 0.0

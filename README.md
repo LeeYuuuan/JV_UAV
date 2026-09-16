@@ -1,8 +1,9 @@
 # Two-level UAV simulation core
 
-This rewrite starts from the complete upper-frame execution flow and adds only
-the interfaces needed by that flow. It intentionally contains no SAC, DQN,
-PPO, replay buffer, optimizer, or checkpoint code.
+The simulation starts from the complete upper-frame execution flow. Training
+is isolated in `src/jv_uav/rl`: an attention SAC lower policy and a MAPPO upper
+policy share this environment without putting optimizers or replay in Scene.
+See [TRAINING.md](TRAINING.md) for the confirmed training contract and commands.
 
 ## The state and time contract
 
@@ -13,7 +14,7 @@ state. An upper frame is executed in this exact order:
 2. `Scene.begin_upper_frame(plan)` fixes every UAV's role for this frame.
 3. `LowFrameRunner` calls `LowEnv.step()` up to ten times.
 4. On the tenth low step, serving UAVs are tested for return feasibility. A
-   failed requested return is also attached to this final low-step reward.
+   final return-safety failure is penalized only in the lower reward.
 5. `Scene.complete_upper_frame()` settles return energy, charging energy, and
    positions for non-serving UAVs.
 6. Full UAVs are released and waiting UAVs are promoted.
@@ -97,3 +98,93 @@ pytest -q
 `run_smoke_test.py` uses deterministic zero-displacement lower actions and a
 simple lowest-battery upper request policy. These are smoke-test policies, not
 research baselines.
+
+
+## Render
+
+From the project root, using the Python environment with dependencies installed:
+
+```powershell
+python run_render_demo.py --frames 12 --output outputs/render_demo --gif
+```
+
+The demo uses deterministic diagnostic policies, not trained agents. Its fixed
+map-derived waypoints do not change the RL observation contract. Outputs are
+`dashboard.png`, `heatmaps.png`, `trace.json`, and optionally `episode.gif`.
+The GIF shows frame boundaries, not continuous low-step flight animation.
+Omit `--gif` for faster PNG-only rendering; add `--show` for Matplotlib windows.
+
+Render any existing upper environment after reset or step:
+
+```python
+env.render(save_path="outputs/dashboard.png", show=False)
+env.render(view="heatmaps", save_path="outputs/heatmaps.png", show=False)
+env.render(sensor_value="last_visit", trail_frames=10, show=True)
+```
+
+The standalone `jv_uav.render_env(env, ...)` accepts the same options. Sensor
+values stay in physical units; `last_visit` is displayed in minutes. UAV colors
+are consistent across flight paths and battery panels. The role timeline shows
+roles assigned during frames, while the fleet panel shows current status after
+release/promotion. Solid lines are recorded service trajectories; dashed return
+lines connect endpoints and do not imply sampled flight timing.
+
+Rendering does not advance the environment or consume its random state.
+`show=False` closes the Matplotlib figure after saving and returns the Figure
+object for callers that need it. PNG, SVG and PDF paths are supported through
+Matplotlib. Matplotlib is imported lazily, so simulation-only imports do not
+open windows. Optional GIF export uses Pillow (a Matplotlib dependency).
+
+Frames now include `settled` and `termination_reason`. An early terminal frame
+is hatched and marked **unsettled**: non-serving battery/position is not settled,
+and return/charging/waiting durations in its records remain planned values.
+Death still ends the episode immediately; no partial settlement is introduced.
+
+Coverage heatmaps retain the current recorder's geometric definition: endpoints
+of UAVs serving at step start, including UAVs that fail during that step. They
+must not be interpreted as successful collection. Sensor service counts and
+collected-packet maps use actual service results. Frame-end battery lines are
+boundary samples, not within-frame charge curves.
+
+
+## Confirmed geometry and per-step evaluation fields
+
+UAV service altitude is 100 m above ground; airship altitude is 150 m above
+ground. The return climb is therefore 50 m. With a coverage angle of 60 degrees
+from vertical (30 degrees elevation from the ground), the configured coverage
+radius is 173.2 m. The service model, metrics and renderer share this radius.
+
+`EpisodeTrace` additionally persists three arrays with one row per executed low
+step, including steps in early terminal frames:
+
+- `covered_max_pre_service_timeline`: maximum backlog among covered sensors,
+  after current-step arrivals and before collection; zero if none are covered.
+- `per_uav_owned_max_pre_service_timeline`: full-fleet rows, with column `i`
+  always corresponding to integer UAV ID `i`. Values are zero when the UAV
+  owns no sensors, including non-serving UAVs.
+- `serving_ids_timeline`: IDs serving at step start, preserving the action-row
+  mapping and distinguishing inactive UAVs from active UAVs owning no sensors.
+
+These arrays have length T. Existing backlog max/mean timelines have length
+T+1 because they include the cold-start sample. Low-step row k corresponds to
+backlog row k+1 and time `(k+1) * low_step_sec`; pre-service and post-service
+quantities must remain distinguished. `to_serializable()` and the render demo's
+`trace.json` include these fields. Rendering keeps physical units and evaluation
+metrics do not enter policy observations.
+
+
+## Joint training
+
+After activating the Torch-enabled environment:
+
+```powershell
+python train_joint.py --smoke --device cuda --output runs/smoke
+python train_joint.py --device cuda --upper-steps 1000 --output runs/joint_001
+```
+
+The default schedule updates MAPPO after 100 upper decisions, updates SAC once
+per low transition after warm-up, and switches after 250000 successful SAC updates
+to one SAC update following each MAPPO update. The switch threshold and both
+frequencies live in `configs/training.yaml`. A smoke run temporarily lowers this
+threshold to test the switch. Read `TRAINING.md` before a long experiment; the
+upper backlog weight and training hyperparameters remain tunable.

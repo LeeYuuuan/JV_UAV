@@ -1,0 +1,41 @@
+# Upper rollout steps are environment frames, accumulated across episode resets.
+seed: 123
+total_upper_steps: 100000
+upper_rollout_steps: 100
+switch_after_sac_updates: 250000
+early_sac_updates_per_step: 1
+late_sac_updates_per_mappo: 1
+checkpoint_every_mappo: 10
+evaluate_every_mappo: 10
+evaluation_seeds: [1001, 1002, 1003]
+normalization:
+  clip: 10.0
+  min_std_sec: 60.0
+sac:
+  hidden: 128
+  heads: 4
+  layers: 2
+  lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.2
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  random_steps: 1000
+  learning_starts: 1000
+  reward_scale: 0.01
+  max_grad_norm: 1.0
+mappo:
+  hidden: 128
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  epochs: 5
+  minibatch_frames: 25
+  clip: 0.2
+  value_clip: 0.2
+  entropy_coef: 0.01
+  reward_scale: 0.01
+  max_grad_norm: 1.0

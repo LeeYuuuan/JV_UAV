@@ -125,6 +125,8 @@ class FrameRecord:
     system_max_post_service_mean: float
     system_mean_post_service_mean: float
     uavs: list[UAVFrameRecord]
+    settled: bool = True
+    termination_reason: str | None = None
 
 
 @dataclass
@@ -136,6 +138,11 @@ class EpisodeTrace:
     sensor_collected_packets: np.ndarray | None = None
     coverage_grid_step_count: np.ndarray | None = None
     uav_presence_grid_count: np.ndarray | None = None
+
+    # One entry per executed low step, without a synthetic cold-start sample.
+    covered_max_pre_service_timeline: list[float] = field(default_factory=list)
+    per_uav_owned_max_pre_service_timeline: list[list[float]] = field(default_factory=list)
+    serving_ids_timeline: list[list[int]] = field(default_factory=list)
 
     def to_serializable(self) -> dict[str, Any]:
         from dataclasses import asdict

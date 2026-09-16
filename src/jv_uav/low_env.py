@@ -24,7 +24,7 @@ class LowReward:
 
     def __call__(
         self,
-        result: LowStepResult,
+        result: LowStepResult, 
         *,
         final_return_failure_count: int = 0,
     ) -> tuple[float, dict[str, float]]:
@@ -95,15 +95,12 @@ class LowEnv:
         self,
         result: LowStepResult,
         unsafe_serving_ids: np.ndarray,
-        deferred_return_failure_ids: np.ndarray,
     ) -> None:
         result.return_unsafe_ids = unsafe_serving_ids.copy()
-        result.deferred_return_failure_ids = deferred_return_failure_ids.copy()
-        failure_ids = np.unique(
-            np.concatenate([unsafe_serving_ids, deferred_return_failure_ids])
-        )
+
         result.reward, result.reward_terms = self.reward_model(
-            result, final_return_failure_count=len(failure_ids)
+            result,
+            final_return_failure_count=len(unsafe_serving_ids.copy()),
         )
 
 

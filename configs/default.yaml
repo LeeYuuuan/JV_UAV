@@ -22,7 +22,7 @@ uavs:
   initial_serving_ids: [0, 1, 2, 3, 4, 5]
   speed_mps: 6.0
   max_move_time_sec: 30.0
-  coverage_radius_m: 86.6
+  coverage_radius_m: 173.2  # 100 m altitude * tan(60 deg from vertical)
   return_reserve_frac: 0.0
 
 time:
@@ -38,7 +38,7 @@ energy:
   charging_power_w: 500.0
   horizontal_speed_mps: 6.0
   climb_speed_mps: 5.0
-  service_to_airship_height_m: 50.0
+  service_to_airship_height_m: 50.0  # Airship 150 m AGL minus service altitude 100 m AGL
 
 zones:
   charging_slots: 2

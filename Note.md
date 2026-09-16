@@ -31,7 +31,7 @@
 - oob_mask: np.ndarray                          [UAV是否出界的list]
 - oob_overflow_distance_m: np.ndarray           [UAV出界的距离]
 - dead_during_step: np.ndarray                  [UAV在frame中dead的id list]
-
+-------------以下生成于
 - return_unsafe_ids:
     deferred_return_failure_ids: np.ndarray = field(
         default_factory=lambda: np.zeros(0, dtype=np.int64)
@@ -49,6 +49,15 @@
 
 - functions
     - reset()
+        - cold_start: 冷启动 sensors buffer里的packets
+        - last_visit_sec reset
+        - uav 放回 airship
+        - uav 电量变满
+        - uav 都进入serving状态
+        - 时钟置 0s
+        - 上层 step置 0s
+        - 下层step数量 = step 0
+        - 当前step 在frame 中的位置 = 0
     
     - observe_lower(): [global] obs: [[serving_ids], [serving_pos], [serving_batterys], [sensor_last_visit]]  
     - observe_upper(): [global] obs: [[uav_pos], [uav_battery], [uav_status], [charging_occupancy], [waiting_occupancy]]
@@ -57,6 +66,8 @@
     
     - evolve_low_step()
     - mark_unable_to_return_dead()
+        - 根据energy model算出 所有服务uav返航需要消耗的能量，如果这个能量小于 他们当前的能量+ 一个预留的能量for safe，就判定为un safe
+        - output: unsafe UAV list
 
     - complete_upper_frame()
 

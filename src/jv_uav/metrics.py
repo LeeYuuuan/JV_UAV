@@ -38,6 +38,11 @@ class EpisodeMetrics:
     def record_low_step(self, result: LowStepResult) -> None:
         self.trace.backlog_max_post_timeline.append(result.system_max_post_service)
         self.trace.backlog_mean_post_timeline.append(result.system_mean_post_service)
+        self.trace.covered_max_pre_service_timeline.append(result.covered_max_pre_service)
+        self.trace.per_uav_owned_max_pre_service_timeline.append(
+            result.per_uav_owned_max_pre_service.astype(float).tolist()
+        )
+        self.trace.serving_ids_timeline.append(result.serving_ids.astype(int).tolist())
         covered = result.sensor_owner >= 0
         self.trace.sensor_visit_count[covered] += 1
         self.trace.sensor_collected_packets += result.collected_per_sensor

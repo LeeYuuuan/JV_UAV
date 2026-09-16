@@ -9,6 +9,7 @@ from .models import (
     LowestArrivalBatteryScheduler,
     SimpleEnergyModel,
 )
+from .render import render_env
 from .scene import Scene
 from .types import EpisodeTrace, FramePlan, UAVStatus, UpperAction
 from .upper_env import UpperEnv
@@ -29,5 +30,6 @@ __all__ = [
     "UpperEnv",
     "build_smoke_test_runner",
     "load_config",
+    "render_env",
     "validate_config",
 ]
