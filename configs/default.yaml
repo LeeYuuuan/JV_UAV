@@ -3,12 +3,12 @@ seeds:
   dynamics_seed: 43
 
 world:
-  size_m: 2400.0
-  airship_xy_m: [1200.0, 1200.0]
+  size_m: 4000.0
+  airship_xy_m: [2000.0, 2000.0]
 
 sensors:
   count: 320
-  arrival_rate_per_sec: 0.1
+  arrival_rate_per_sec: 0.5
   cold_start_sec: 60.0
   cluster_count: 9
   cluster_ratio: 0.90

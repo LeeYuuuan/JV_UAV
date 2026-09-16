@@ -32,6 +32,11 @@ class MAPPO:
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg["critic_lr"])
 
     @torch.no_grad()
+    def request_probabilities(self, obs):
+        actors = torch.as_tensor(obs["actor"], device=self.device)
+        return self.actor(actors).squeeze(-1).sigmoid().cpu().numpy()
+
+    @torch.no_grad()
     def act(self, obs, deterministic=False):
         actors = torch.as_tensor(obs["actor"], device=self.device)
         dist = torch.distributions.Bernoulli(logits=self.actor(actors).squeeze(-1))

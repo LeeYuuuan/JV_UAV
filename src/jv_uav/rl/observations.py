@@ -49,9 +49,15 @@ def copy_lower(obs):
     return {key: np.asarray(value).copy() for key, value in obs.items()}
 
 
-def lower_arrays(obs, rms, world_size):
+def lower_arrays(obs, rms, world_size, fleet_size=None):
     features = obs["active_uav_features"].copy()
     features[:, :2] /= world_size
+    if fleet_size is not None:
+        ids = np.asarray(obs["active_uav_ids"])
+        if fleet_size <= 0 or np.any(ids < 0) or np.any(ids >= fleet_size):
+            raise ValueError("active UAV IDs must belong to the configured fleet")
+        identity = ids.astype(np.float32)[:, None] / max(fleet_size - 1, 1)
+        features = np.concatenate([features, identity], axis=1)
     return rms.normalize(obs["sensor_last_visit_sec"]), features
 
 

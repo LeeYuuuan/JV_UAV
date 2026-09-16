@@ -7,15 +7,15 @@ import torch
 from .observations import copy_lower, lower_arrays
 
 
-def pack_observations(observations, rms, world_size, device):
+def pack_observations(observations, rms, world_size, device, fleet_size=None):
     size = max(1, max(len(obs["active_uav_ids"]) for obs in observations))
     b = len(observations)
-    features = np.zeros((b, size, 3), np.float32)
+    features = np.zeros((b, size, 3 if fleet_size is None else 4), np.float32)
     masks = np.zeros((b, size), bool)
     ids = np.full((b, size), -1, np.int64)
     globals_ = []
     for index, obs in enumerate(observations):
-        global_, tokens = lower_arrays(obs, rms, world_size)
+        global_, tokens = lower_arrays(obs, rms, world_size, fleet_size)
         n = len(tokens)
         features[index, :n] = tokens
         masks[index, :n] = True
@@ -52,11 +52,11 @@ class Replay:
             self.items[self.pos] = item
         self.pos = (self.pos + 1) % self.capacity
 
-    def sample(self, batch_size, rms, world_size, device):
+    def sample(self, batch_size, rms, world_size, device, fleet_size=None):
         indices = self.rng.choice(len(self.items), batch_size, replace=False)
         items = [self.items[i] for i in indices]
-        current = pack_observations([x[0] for x in items], rms, world_size, device)
-        next_ = pack_observations([x[3] for x in items], rms, world_size, device)
+        current = pack_observations([x[0] for x in items], rms, world_size, device, fleet_size)
+        next_ = pack_observations([x[3] for x in items], rms, world_size, device, fleet_size)
         actions = np.zeros((*current["mask"].shape, 2), np.float32)
         for i, item in enumerate(items):
             actions[i, :len(item[1])] = item[1]

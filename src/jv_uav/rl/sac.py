@@ -24,8 +24,11 @@ class SAC:
         self.cfg, self.device = cfg, torch.device(device)
         sensors, fleet = env_cfg["sensors"]["count"], env_cfg["uavs"]["count"]
         args = (sensors, cfg["hidden"], cfg["heads"], cfg["layers"])
-        self.actor = AttentionActor(*args).to(device)
-        self.critic = TwinQ(*args, fleet).to(device)
+        # Missing flag preserves the architecture of pre-identity checkpoints.
+        self.identity_fleet_size = fleet if cfg.get("include_uav_id", False) else None
+        token_dim = 4 if self.identity_fleet_size is not None else 3
+        self.actor = AttentionActor(*args, token_dim).to(device)
+        self.critic = TwinQ(*args, fleet, token_dim).to(device)
         self.target = copy.deepcopy(self.critic).requires_grad_(False)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg["lr"])
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg["lr"])
@@ -35,13 +38,13 @@ class SAC:
 
     @torch.no_grad()
     def act(self, obs, rms, deterministic=False):
-        batch = pack_observations([obs], rms, self.world_size, self.device)
+        batch = pack_observations([obs], rms, self.world_size, self.device, self.identity_fleet_size)
         action, _ = self.actor(batch, deterministic)
         return action[0, :len(obs["active_uav_ids"])].cpu().numpy()
 
     def update(self, replay, rms):
         cfg = self.cfg
-        obs, action, reward, next_, done = replay.sample(cfg["batch_size"], rms, self.world_size, self.device)
+        obs, action, reward, next_, done = replay.sample(cfg["batch_size"], rms, self.world_size, self.device, self.identity_fleet_size)
         alpha = self.log_alpha.exp().detach()
         with torch.no_grad():
             target = reward * cfg["reward_scale"]

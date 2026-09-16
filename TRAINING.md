@@ -91,8 +91,11 @@ frame can execute fewer than 10 low steps.
 
 ## Observation and normalization contract
 
-Lower actor tokens contain only `[x/world_size, y/world_size, SOC]`. Integer IDs
-stay in replay/action metadata and never enter the network. Global input is the
+New lower actor/critic tokens contain
+`[x/world_size, y/world_size, SOC, id/max(total_uavs-1,1)]`. The user confirmed
+restoring identity on 2026-09-16 to distinguish colocated, equal-battery UAVs.
+Integer IDs remain the action-row mapping; the added scalar uses the fixed total
+fleet size, never the current serving count. Global input is the
 sensor last-visit vector; no sensor backlog or positions are added. A single
 RunningMeanStd pools real sensor values across decision observations, once per
 new low decision. It never updates from replay samples or duplicated UAV tokens.
@@ -102,7 +105,7 @@ normalized values are clipped to +/-10. These are configurable starter settings.
 Replay stores raw observations and normalized requested actions in [-1,1]. Both
 current and next observations are transformed using the same current statistics
 when sampled. Current and next variable lengths have independent padding masks.
-Padding and integer IDs do not enter normalization. The physical environment
+Padding and IDs do not enter RunningMeanStd; IDs use the fixed scaling above. The physical environment
 continues to perform the agreed component and radial action limiting.
 
 Upper shared actor observation for UAV i, in order:
@@ -142,7 +145,7 @@ moving training code into Scene or duplicating the upper execution path.
 
 ## Algorithms and numerical choices
 
-SAC uses an ID-free UAV Transformer actor, two separate attention Q networks,
+SAC uses an identity-aware UAV Transformer actor, two separate attention Q networks,
 Polyak target critics, normalized tanh-Gaussian actions and automatic entropy
 temperature. Log-probabilities sum over valid action dimensions only; the target
 entropy is -2 times the current number of active UAVs. The critic pools valid
@@ -187,7 +190,7 @@ restores state, but cross-device bit-for-bit numerical identity is not promised.
 
 ## Validation and references
 
-Behavioral tests cover ID-free permutation behavior, padding exclusion, shared
+Behavioral tests cover row-permutation behavior with attached identity, padding exclusion, shared
 RMS, independently sized next observations, empty terminal sets, cross-frame
 allocation, terminal/horizon targets, GAE reset boundaries, exact early/late
 schedule counts, CPU checkpoint continuation and read-only seeded evaluation.
@@ -202,3 +205,30 @@ Algorithm references:
 
 Short CPU/CUDA runs validate execution and recovery, not convergence, safety of
 a learned policy, or performance relative to research baselines.
+
+## Evaluation diagnostics (2026-09-16)
+
+A normal evaluation targets `episode_upper_frames` (default 100), or 1000 lower
+steps. Any UAV death still ends that episode immediately; evaluation does not
+hide failure by resetting or forcing dead UAVs to continue. A smoke checkpoint
+retains its shorter horizon and network configuration.
+
+`summary.json` now includes configured and actual lengths, termination reason,
+charge requests, charging/waiting assignments, actual charging energy by UAV,
+and the fraction of sensors visited at least once. `policy_trace.json` records
+per-frame request probabilities, selected actions, allocated roles, start/end
+SOC, return cost, actual charging energy and upper reward components. Requests,
+allocated charging roles and positive energy received are distinct quantities.
+Evaluation dashboards plot the entire recorded episode (previously only the
+last six frames). Interactive rendering still defaults to a six-frame trail.
+
+The September audit found identical [x,y,SOC] inputs forced identical deterministic
+ID-free actions. New runs now enable `sac.include_uav_id: true`. Old checkpoints
+without that flag retain their three-feature architecture and emit a warning;
+resuming them does not apply the identity fix. Start a fresh run for four-feature
+models. This removes forced symmetry but does not itself prove learned coverage.
+
+Unbounded negative backlog costs with early termination can still reward early
+failure over long survival. The lower coverage reward coefficient also differs
+substantially from the old Transformer implementation. Reward redesign remains
+pending confirmation; longer training alone does not resolve it.

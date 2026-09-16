@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,8 @@ def validate_training(cfg):
         if not isinstance(cfg[key], int) or cfg[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
     sac, ppo = cfg["sac"], cfg["mappo"]
+    if not isinstance(sac.get("include_uav_id", False), bool):
+        raise ValueError("sac.include_uav_id must be boolean")
     for block, keys in ((sac, ("batch_size", "replay_capacity", "hidden", "heads", "layers")), (ppo, ("hidden", "epochs", "minibatch_frames"))):
         if any(not isinstance(block[key], int) or block[key] <= 0 for key in keys):
             raise ValueError("network and batch sizes must be positive integers")
@@ -144,6 +147,13 @@ class JointTrainer:
             "pending_transition": self.pending is not None,
             "dead_ids": info["dead_ids_end"].tolist(),
             "system_max_backlog": float(self.env.scene.sensor_backlog.max()),
+            "frame_low_steps": len(info["low_frame"].steps),
+            "termination_reason": self.env.trace.frames[-1].termination_reason,
+            "charge_requests": int(info["frame_plan"].requested_charge.sum()),
+            "charging_assignments": int(np.sum(info["frame_plan"].assigned_status == 2)),
+            "waiting_assignments": int(np.sum(info["frame_plan"].assigned_status == 1)),
+            "charge_added_soc": float(np.sum(info["settlement"].get("charge_added_frac", 0.0))),
+            "upper_reward_terms": dict(info["reward_terms"]),
             **self.last_losses,
         }
 
@@ -158,21 +168,56 @@ class JointTrainer:
         frozen_rms.training = False
         env.low_runner.low_policy = lambda obs: self.sac.act(obs, frozen_rms, deterministic=True)
         total_return = 0.0
+        policy_trace = []
+        charge_added = np.zeros(env.scene.num_uavs, dtype=np.float64)
         while True:
             obs = upper_observation(env.scene, env.energy_model)
+            probabilities = self.mappo.request_probabilities(obs)
             action, _, _ = self.mappo.act(obs, deterministic=True)
-            _, reward, terminated, truncated, _ = env.step(action)
+            _, reward, terminated, truncated, info = env.step(action)
+            plan = info["frame_plan"]
+            added = info["settlement"].get("charge_added_frac", np.zeros(env.scene.num_uavs))
+            charge_added += added
+            policy_trace.append({
+                "frame": len(policy_trace) + 1,
+                "request_probabilities": probabilities.tolist(),
+                "actions": action.tolist(),
+                "assigned_status": plan.assigned_status.tolist(),
+                "battery_start": plan.frame_start_battery.tolist(),
+                "battery_end": env.scene.uav_battery.tolist(),
+                "return_energy_frac": plan.return_energy_frac.tolist(),
+                "charge_added_frac": added.tolist(),
+                "low_steps": len(info["low_frame"].steps),
+                "reward_terms": dict(info["reward_terms"]),
+                "termination_reason": env.trace.frames[-1].termination_reason,
+            })
             total_return += reward
             if terminated or truncated:
                 break
         summary = {"seed": seed, "upper_return": total_return, "low_steps": env.scene.low_step_total, "frames": len(env.trace.frames), "dead_ids": env.scene.dead_ids().tolist(), "mean_max_backlog": float(np.mean(env.trace.backlog_max_post_timeline[1:])), "terminated": bool(terminated), "truncated": bool(truncated)}
+        summary.update(
+            configured_frames=env.max_frames,
+            configured_low_steps=env.max_frames * env.scene.low_steps_per_frame,
+            completed_horizon=bool(truncated),
+            termination_reason=env.trace.frames[-1].termination_reason if terminated else "horizon_reached",
+            policy_mode="deterministic",
+            lower_identity_features=self.sac.identity_fleet_size is not None,
+            charge_requests=sum(sum(row["actions"]) for row in policy_trace),
+            charging_assignments=sum(row["assigned_status"].count(2) for row in policy_trace),
+            waiting_assignments=sum(row["assigned_status"].count(1) for row in policy_trace),
+            charge_added_soc_by_uav=charge_added.tolist(),
+            charged_uav_ids=np.flatnonzero(charge_added > 0).tolist(),
+            sensor_coverage_fraction=float(np.mean(env.trace.sensor_visit_count > 0)),
+            trajectory_frames=len(env.trace.frames),
+        )
         if output is not None:
             output = Path(output)
             output.mkdir(parents=True, exist_ok=True)
             (output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False), encoding="utf-8")
             (output / "trace.json").write_text(json.dumps(env.trace.to_serializable(), allow_nan=False), encoding="utf-8")
+            (output / "policy_trace.json").write_text(json.dumps(policy_trace, indent=2, allow_nan=False), encoding="utf-8")
             if render:
-                env.render(show=False, save_path=output / "dashboard.png")
+                env.render(show=False, save_path=output / "dashboard.png", trail_frames=len(env.trace.frames))
                 env.render(show=False, view="heatmaps", save_path=output / "heatmaps.png")
         return summary
 
@@ -206,6 +251,12 @@ class JointTrainer:
         if state["version"] != 1:
             raise ValueError("unsupported checkpoint version")
         trainer = cls(state["env_cfg"], state["train_cfg"], device)
+        if trainer.sac.identity_fleet_size is None:
+            warnings.warn(
+                "This checkpoint uses legacy ID-free lower observations. Resume preserves "
+                "that architecture; start a fresh run with include_uav_id=true for identity features.",
+                UserWarning,
+            )
         trainer.sac.load_state_dict(state["sac"])
         trainer.mappo.load_state_dict(state["mappo"])
         trainer.rms.load_state_dict(state["rms"])

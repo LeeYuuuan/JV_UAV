@@ -92,7 +92,10 @@ def main():
                 f"  eval {label} | seed {summary['seed']} | "
                 f"return {summary['upper_return']:10.2f} | "
                 f"avg_max_backlog {summary['mean_max_backlog']:9.2f} | "
-                f"frames {summary['frames']:4d} | dead {len(summary['dead_ids']):2d}",
+                f"frames {summary['frames']:4d}/{summary['configured_frames']} | "
+                f"low_steps {summary['low_steps']:4d} | dead {len(summary['dead_ids']):2d} | "
+                f"charge requests/assigned {summary['charge_requests']}/{summary['charging_assignments']} | "
+                f"stop {summary['termination_reason']}",
                 flush=True,
             )
 

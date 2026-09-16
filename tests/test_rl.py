@@ -63,7 +63,7 @@ def test_attention_ignores_padding_and_is_permutation_equivariant():
     env, cfg = trainer_config()
     trainer = JointTrainer(env, cfg)
     obs = raw_obs([0, 2, 5])
-    batch = pack_observations([obs], trainer.rms, 2400, 'cpu')
+    batch = pack_observations([obs], trainer.rms, 2400, 'cpu', trainer.sac.identity_fleet_size)
     with torch.no_grad():
         action, _ = trainer.sac.actor(batch, True)
         q = trainer.sac.critic(batch, action)[0]
@@ -72,7 +72,7 @@ def test_attention_ignores_padding_and_is_permutation_equivariant():
         perm_action, _ = trainer.sac.actor(permuted, True)
         np.testing.assert_allclose(perm_action.numpy(), action[:, permutation].numpy(), atol=1e-6)
         torch.testing.assert_close(trainer.sac.critic(permuted, perm_action)[0], q)
-        padded = pack_observations([obs, raw_obs([0,1,2,3,4,5])], trainer.rms, 2400, 'cpu')
+        padded = pack_observations([obs, raw_obs([0,1,2,3,4,5])], trainer.rms, 2400, 'cpu', trainer.sac.identity_fleet_size)
         padded['tokens'][0, 3:] = 10000
         padded_action, _ = trainer.sac.actor(padded, True)
         torch.testing.assert_close(padded_action[0,:3], action[0], atol=1e-6, rtol=1e-5)

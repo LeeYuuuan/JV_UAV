@@ -1,0 +1,34 @@
+# Python caches and test tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local virtual environments and packaging
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# Training, evaluation and rendering outputs
+/runs/
+/outputs/
+*.pt
+*.pt.tmp
+*.pth
+*.ckpt
+*.log
+events.out.tfevents.*
+
+# Local secrets and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

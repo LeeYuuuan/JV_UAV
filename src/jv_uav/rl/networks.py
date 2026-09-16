@@ -1,4 +1,4 @@
-"""ID-free attention SAC and shared-actor centralized-value MAPPO networks."""
+"""Attention SAC with configurable identity features and shared-actor MAPPO."""
 from __future__ import annotations
 
 import math
@@ -32,9 +32,9 @@ class AttentionEncoder(nn.Module):
 
 
 class AttentionActor(nn.Module):
-    def __init__(self, sensors, hidden, heads, layers):
+    def __init__(self, sensors, hidden, heads, layers, token_dim=3):
         super().__init__()
-        self.encoder = AttentionEncoder(sensors, 3, hidden, heads, layers)
+        self.encoder = AttentionEncoder(sensors, token_dim, hidden, heads, layers)
         self.mean = nn.Linear(hidden, 2)
         self.log_std = nn.Linear(hidden, 2)
 
@@ -53,9 +53,9 @@ class AttentionActor(nn.Module):
 
 
 class AttentionQ(nn.Module):
-    def __init__(self, sensors, hidden, heads, layers, fleet_size):
+    def __init__(self, sensors, hidden, heads, layers, fleet_size, token_dim=3):
         super().__init__()
-        self.encoder = AttentionEncoder(sensors, 5, hidden, heads, layers)
+        self.encoder = AttentionEncoder(sensors, token_dim + 2, hidden, heads, layers)
         self.fleet_size = fleet_size
         self.head = nn.Sequential(nn.Linear(2 * hidden + 1, hidden), nn.ReLU(), nn.Linear(hidden, 1))
 

@@ -14,6 +14,7 @@ normalization:
   clip: 10.0
   min_std_sec: 60.0
 sac:
+  include_uav_id: true
   hidden: 128
   heads: 4
   layers: 2
