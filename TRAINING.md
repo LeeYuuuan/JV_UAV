@@ -39,11 +39,11 @@ The default new run collects 400000 upper frames. Each episode lasts at most
 100 frames, with 10 lower steps per complete frame. This is equivalent to 4000
 full-length episodes and at most 4000000 lower steps. UAV deaths end episodes
 early, so the actual episode count can be higher. The frame budget stays fixed
-across episode resets and allows 4000 MAPPO update calls from a fresh run.
+across episode resets and allows 781 full MAPPO update calls plus a saved 128-frame partial rollout.
 
 This is an initial training budget, not a convergence guarantee. Compare the
 fixed-seed evaluation returns, backlog and survival across checkpoints before
-deciding whether more training is useful. SAC updates continue at a constant per-transition rate. Evaluation/checkpoint cadence is unchanged.
+deciding whether more training is useful. SAC updates continue at a constant per-transition rate. Evaluation/checkpoints occur every 1024 frames (two MAPPO updates).
 
 An already running process keeps its loaded settings. Old checkpoints also
 retain their saved budget; changing the YAML does not override resume settings.
@@ -70,14 +70,14 @@ All values are configurable in `configs/training.yaml`:
   warm-up and batch availability permit. A final frame transition can be delayed
   until the next allocation; it still contributes at most one default
   update opportunity.
-- Default warm-up: 1000 random low actions and `learning_starts=1000`; minibatch
+- Default warm-up: 10000 waypoint low actions and `learning_starts=10000`; minibatch
   size 256. Skipped updates do not advance `sac_updates`.
-- MAPPO collects 100 upper decisions, across episode resets if needed, then
-  performs one PPO update call. One call uses 5 epochs of minibatches containing
-  25 frames each, i.e. 20 actor and 20 critic optimizer steps by default.
+- MAPPO collects 512 upper decisions, across episode resets if needed, then
+  performs one PPO update call. One call uses 3 epochs of minibatches containing
+  128 frames each, i.e. 12 actor and 12 critic optimizer steps by default.
 - `sac_updates_per_step: 1` stays fixed throughout training. MAPPO updates do
   not trigger additional SAC updates. The former frequency switch is removed.
-- A run stopping before 100 upper decisions preserves its partial rollout in
+- A run stopping before 512 upper decisions preserves its partial rollout in
   the checkpoint; it does not silently perform an extra partial PPO update.
 
 Environment steps, SAC update calls, MAPPO update calls and PPO minibatches are
@@ -149,14 +149,14 @@ global last-visit MLPs mean the sensor count is fixed for a checkpoint, even tho
 the active UAV count can change.
 
 MAPPO uses a shared Bernoulli actor, scalar centralized team value, GAE, clipped
-per-agent policy ratios, clipped value loss and normalized advantages. Actor
+per-agent policy ratios, optional value clipping (disabled by default) and normalized advantages. Actor
 samples share the team advantage; critic samples are counted once per frame.
 There is no independent per-agent reward or occupancy action masking.
 
 Raw evaluation backlog metrics remain unchanged. Training uses a
-configurable overall reward multiplier (0.01 for each level) to set optimization
+configurable overall reward multiplier (1.0 for each level) to set optimization
 scale. This is not observation RMS and does not replace reward-weight selection.
-The upper backlog weight now caps the bounded cost at 1.0; see the reward section below. Network widths, rates, entropy and optimizer
+The upper backlog cost is linear and uncapped; see the reward section below. Network widths, rates, entropy and optimizer
 settings are starter values, not validated research hyperparameters.
 
 Losses and gradients must be finite. Nonfinite values raise errors rather than
@@ -221,9 +221,7 @@ without that flag retain their three-feature architecture and emit a warning;
 resuming them does not apply the identity fix. Start a fresh run for four-feature
 models. This removes forced symmetry but does not itself prove learned coverage.
 
-The September 21 revision below bounds the upper backlog cost and adds an
-upper episode-failure cost. The lower coverage/backlog balance remains linear
-and differs from the old Transformer implementation; monitor it independently.
+The confirmed September 22 reward and exploration settings are listed below.
 
 ## Live training curves
 
@@ -268,36 +266,12 @@ dimension; resuming a 320-sensor checkpoint does not apply this new map.
 
 ## Reward and exploration revision (2026-09-21)
 
-The defaults use B = mean of the post-service system maximum backlog over the
-executed low steps in a frame, and B0 = arrival_rate_per_sec * low_step_sec *
-low_steps_per_frame * upper_backlog_reference_frames. B0 is 3000 packets at the
-current defaults (10 frames = 100 simulation minutes).
+Upper reward uses the mean post-service maximum backlog over executed lower
+steps, divided by 6000 without clipping. Lower-only return failures have no
+upper death penalty. See the confirmed reward formulas below. Compare raw
+backlog, coverage and survival alongside reward; convergence is not established.
 
-Upper reward is serving_count - B/(B+B0) - failure_cost. Serving weight stays
-1.0; upper_frame_max_backlog_weight=1.0 is now the maximum backlog cost.
-The cost is 0, 0.5, and 0.909 at B=0, 3000, and 30000. It is monotonic, but
-compresses differences between very large backlogs. This changes the objective
-from linear backlog minimization; always compare raw backlog, coverage, and
-survival, not reward alone. Under the current 6-UAV/4-slot configuration, a
-healthy frame has at least 2 serving UAVs, hence positive upper reward. It no
-longer offers an accumulating negative backlog tail to escape through death.
-
-Upper-responsibility deaths retain -1000 per UAV. If an episode instead fails
-only through lower final-return infeasibility, the upper reward receives one
--1000 episode_failure cost. This is a shared episode outcome cost, not a second
-per-UAV return cost. It closes the previously unpenalized upper termination
-path. A mixed failure does not add this cost on top of upper death penalties;
-ordinary horizon truncation receives no failure cost. This intentionally
-supersedes the old rule that lower failures carry no upper consequence.
-
-The lower final-return cost is -1000 per failed UAV, plus -1000 * distance/1800m
-for each failed UAV, using the final horizontal distance to the airship. The
-50m climb remains in the physical energy model; the new cost does not change
-battery accounting. Safe far-away UAVs and mid-step deaths do not receive this
-lower distance cost. The original lower collection/backlog reward terms remain
-linear; this revision does not establish their optimal balance or convergence.
-
-Warm-up still lasts 1000 low decisions; learning starts at 1000 with enough
+Warm-up lasts 10000 low decisions; learning starts at 10000 with enough
 replay samples. warmup_mode=waypoint keeps a random target across decisions,
 with initial angular sectors assigned by UAV ID and a random episode rotation.
 Targets are sampled 0.25-0.65 map widths from the airship, restricted to the map.
@@ -321,3 +295,27 @@ The package includes the previously approved 150-sensor map: 100 inside 1800m
 There are 5 inner and 2 outer clusters. All sensors use the same marker shape.
 For map seed 42 only, independent sensor IDs 42 and 106 are placed at (3300,3600)
 and (3700,3200), preserving the other 148 positions and the outer radial region.
+
+
+## Confirmed reward and exploration revision (2026-09-22)
+
+New-run defaults:
+- Upper: `S - mean_step_max_backlog/6000 - 0.05*C - 0.10*W - 20*upper_deaths`.
+  Roles use actual frame assignments. Backlog is linear and uncapped. Lower-only
+  return failures terminate the episode but add no upper death/failure penalty.
+- Lower: `sum(owned_max_pre)/(N*3000) - 0.1*B/(B+3000) - 0.02*out_of_bounds
+  - 30*sum_failed(1 + horizontal_distance/1800)`. N is the fixed fleet size;
+  B is global post-service maximum backlog. Return costs apply on the final step.
+- Both reward scales are 1. MAPPO value clipping is disabled; policy clip stays .2.
+- MAPPO actor LR .0001, critic LR .0003; gamma .99 and GAE .95 unchanged.
+  Entropy coefficient is .05 through cumulative upper frame 10000, linear to
+  .005 at frame 100000, then constant. Logs include `mappo_entropy_coef` at updates.
+  Resume uses the saved frame counter; no KL early stopping is introduced.
+- SAC initial alpha .05, automatic alpha enabled, target entropy -2 per serving
+  UAV. LR .0003, batch 256, gamma .99, tau .005, replay capacity 100000 unchanged.
+- Warm-up uses persistent random waypoints with 20% random-action mixing for
+  10000 lower decisions. SAC learning starts at 10000. No later frequency reduction.
+- Episodes end at 100 frames or death. A 512-frame rollout spans resets; GAE stops
+  at each terminal boundary. A rollout update itself does not reset the scene.
+- New defaults require a fresh run. Resume preserves saved configuration, replay,
+  optimizer state and partial rollout; editing YAML does not migrate checkpoints.

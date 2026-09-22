@@ -40,8 +40,14 @@ def validate_training(cfg):
             raise ValueError("invalid discount, reward scale or gradient limit")
     if not 0 < sac["tau"] <= 1 or sac["alpha"] <= 0 or sac["lr"] <= 0:
         raise ValueError("invalid SAC optimizer parameters")
-    if not 0 <= ppo["gae_lambda"] <= 1 or min(ppo["clip"], ppo["value_clip"], ppo["actor_lr"], ppo["critic_lr"]) <= 0:
+    if not 0 <= ppo["gae_lambda"] <= 1 or min(ppo["clip"], ppo["actor_lr"], ppo["critic_lr"]) <= 0 or (ppo.get("value_clip") is not None and ppo["value_clip"] <= 0):
         raise ValueError("invalid PPO parameters")
+    if not np.isfinite(ppo["entropy_coef"]) or ppo["entropy_coef"] < 0:
+        raise ValueError("entropy_coef must be finite and nonnegative")
+    if "entropy_end_coef" in ppo:
+        if (not np.isfinite(ppo["entropy_end_coef"]) or ppo["entropy_end_coef"] < 0
+                or not 0 <= ppo.get("entropy_decay_start_frame", -1) < ppo.get("entropy_decay_end_frame", -1)):
+            raise ValueError("invalid entropy schedule")
     if cfg["normalization"]["clip"] <= 0 or cfg["normalization"]["min_std_sec"] <= 0:
         raise ValueError("normalization scales must be positive")
 
@@ -141,7 +147,7 @@ class JointTrainer:
         updated = False
         if len(self.rollout) == self.cfg["upper_rollout_steps"]:
             last_value = 0.0 if done else self.mappo.value(upper_observation(self.env.scene, self.env.energy_model))
-            self.last_losses.update(self.mappo.update(self.rollout, last_value))
+            self.last_losses.update(self.mappo.update(self.rollout, last_value, upper_steps=self.upper_steps))
             self.rollout.clear()
             self.mappo_updates += 1
             updated = True
@@ -272,8 +278,8 @@ class JointTrainer:
         trainer = cls(state["env_cfg"], state["train_cfg"], device)
         if "switch_after_sac_updates" in state["train_cfg"]:
             warnings.warn("The retired SAC frequency switch is ignored; per-transition updates continue throughout training.", UserWarning)
-        if state["env_cfg"]["reward"].get("upper_backlog_mode", "linear") != "bounded":
-            warnings.warn("This checkpoint retains its old linear reward and stored replay. Start a fresh run to use the new bounded reward.", UserWarning)
+        if state["env_cfg"]["reward"].get("upper_backlog_scale_packets") != 6000.0 or state["env_cfg"]["reward"].get("upper_backlog_mode", "linear") != "linear":
+            warnings.warn("This checkpoint retains its saved reward configuration and replay. Start a fresh run to use the revised linear upper reward.", UserWarning)
         if trainer.sac.identity_fleet_size is None:
             warnings.warn(
                 "This checkpoint uses legacy ID-free lower observations. Resume preserves "

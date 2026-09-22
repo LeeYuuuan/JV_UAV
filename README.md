@@ -182,9 +182,8 @@ python train_joint.py --smoke --device cuda --output runs/smoke
 python train_joint.py --device cuda --upper-steps 1000 --output runs/joint_001
 ```
 
-The default schedule updates MAPPO after 100 upper decisions, updates SAC once
-per low transition after warm-up, and switches after 250000 successful SAC updates
-to one SAC update following each MAPPO update. The switch threshold and both
-frequencies live in `configs/training.yaml`. A smoke run temporarily lowers this
-threshold to test the switch. Read `TRAINING.md` before a long experiment; the
-upper backlog weight and training hyperparameters remain tunable.
+The default schedule updates MAPPO after 512 upper frames accumulated across
+100-frame episodes (or earlier death resets), using 3 epochs of 128-frame
+minibatches. SAC uses 10000 waypoint warm-up steps, then one update per finalized
+lower transition throughout training. Evaluation and checkpoints run every two
+MAPPO updates (1024 frames). Read `TRAINING.md` for reward and entropy settings.

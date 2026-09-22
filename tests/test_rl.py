@@ -132,7 +132,7 @@ def test_horizon_and_return_death_never_bootstrap():
         assert not any(x[4] for x in trainer.replay.items[:-1])
         if battery == 0.44:
             assert row['terminated'] and not row['truncated']
-            assert trainer.replay.items[-1][2] <= -6000
+            assert -180.1 <= trainer.replay.items[-1][2] <= -180
         else:
             assert row['truncated'] and not row['terminated']
 

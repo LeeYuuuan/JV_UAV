@@ -47,8 +47,19 @@ class MAPPO:
     def value(self, obs):
         return float(self.critic(torch.as_tensor(obs["critic"], device=self.device)).squeeze())
 
-    def update(self, rollout, last_value):
+    def entropy_coefficient(self, upper_steps):
+        """Schedule uses total environment frames, including short episodes."""
+        start = float(self.cfg["entropy_coef"])
+        if "entropy_end_coef" not in self.cfg:
+            return start  # Legacy checkpoints keep their constant coefficient.
+        begin = self.cfg["entropy_decay_start_frame"]
+        end = self.cfg["entropy_decay_end_frame"]
+        fraction = float(np.clip((upper_steps - begin) / (end - begin), 0, 1))
+        return start + fraction * (float(self.cfg["entropy_end_coef"]) - start)
+
+    def update(self, rollout, last_value, *, upper_steps=0):
         cfg = self.cfg
+        entropy_coef = self.entropy_coefficient(upper_steps)
         adv, returns = gae(
             [x["reward"] * cfg["reward_scale"] for x in rollout],
             [x["value"] for x in rollout], [x["done"] for x in rollout],
@@ -72,15 +83,18 @@ class MAPPO:
                 ratio = log_ratio.exp()
                 unclipped = ratio * adv[ids, None]
                 clipped = ratio.clamp(1 - cfg["clip"], 1 + cfg["clip"]) * adv[ids, None]
-                actor_loss = -torch.minimum(unclipped, clipped).mean() - cfg["entropy_coef"] * dist.entropy().mean()
+                actor_loss = -torch.minimum(unclipped, clipped).mean() - entropy_coef * dist.entropy().mean()
                 backward_step(actor_loss, self.actor_opt, self.actor.parameters(), cfg["max_grad_norm"])
                 value = self.critic(critics[ids]).squeeze(-1)
-                value_clipped = old_values[ids] + (value - old_values[ids]).clamp(-cfg["value_clip"], cfg["value_clip"])
-                value_loss = 0.5 * torch.maximum((value - returns[ids]).square(), (value_clipped - returns[ids]).square()).mean()
+                value_error = (value - returns[ids]).square()
+                if cfg.get("value_clip") is not None:
+                    value_clipped = old_values[ids] + (value - old_values[ids]).clamp(-cfg["value_clip"], cfg["value_clip"])
+                    value_error = torch.maximum(value_error, (value_clipped - returns[ids]).square())
+                value_loss = 0.5 * value_error.mean()
                 backward_step(value_loss, self.critic_opt, self.critic.parameters(), cfg["max_grad_norm"])
                 result.append((float(actor_loss.detach()), float(value_loss.detach())))
         means = np.mean(result, axis=0)
-        return {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result)}
+        return {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result), "mappo_entropy_coef": entropy_coef}
 
     def state_dict(self):
         return {name: getattr(self, name).state_dict() for name in ("actor", "critic", "actor_opt", "critic_opt")}

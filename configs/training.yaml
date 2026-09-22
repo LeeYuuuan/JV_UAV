@@ -4,10 +4,10 @@ seed: 123
 total_upper_steps: 400000
 log_every_frames: 50
 plot_every_frames: 100
-upper_rollout_steps: 100
+upper_rollout_steps: 512
 sac_updates_per_step: 1  # Constant throughout training
-checkpoint_every_mappo: 10
-evaluate_every_mappo: 10
+checkpoint_every_mappo: 2
+evaluate_every_mappo: 2
 evaluation_seeds: [1001, 1002, 1003]
 normalization:
   clip: 10.0
@@ -20,26 +20,29 @@ sac:
   lr: 0.0003
   gamma: 0.99
   tau: 0.005
-  alpha: 0.2
+  alpha: 0.05
   auto_alpha: true
   batch_size: 256
   replay_capacity: 100000
-  random_steps: 1000
+  random_steps: 10000
   warmup_mode: waypoint
   warmup_random_fraction: 0.2
-  learning_starts: 1000
-  reward_scale: 0.01
+  learning_starts: 10000
+  reward_scale: 1.0
   max_grad_norm: 1.0
 mappo:
   hidden: 128
-  actor_lr: 0.0003
+  actor_lr: 0.0001
   critic_lr: 0.0003
   gamma: 0.99
   gae_lambda: 0.95
-  epochs: 5
-  minibatch_frames: 25
+  epochs: 3
+  minibatch_frames: 128
   clip: 0.2
-  value_clip: 0.2
-  entropy_coef: 0.01
-  reward_scale: 0.01
+  value_clip: null  # Disable value clipping for the revised reward scale
+  entropy_coef: 0.05
+  entropy_end_coef: 0.005
+  entropy_decay_start_frame: 10000
+  entropy_decay_end_frame: 100000
+  reward_scale: 1.0
   max_grad_norm: 1.0

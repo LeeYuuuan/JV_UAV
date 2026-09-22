@@ -19,6 +19,12 @@ class LowReward:
         uavs = section(cfg, "uavs")
         self.covered_weight = float(reward["low_covered_max_sum_weight"]) / float(uavs["count"])
         self.system_weight = float(reward["low_system_max_after_weight"])
+        self.backlog_scale = float(reward.get("low_backlog_scale_packets", 1.0))
+        self.backlog_mode = reward.get("low_backlog_mode", "linear")
+        if not np.isfinite(self.backlog_scale) or self.backlog_scale <= 0:
+            raise ValueError("low_backlog_scale_packets must be positive and finite")
+        if self.backlog_mode not in {"linear", "bounded"}:
+            raise ValueError("low_backlog_mode must be linear or bounded")
         self.oob_weight = float(reward["low_oob_uav_weight"])
         self.death_weight = float(reward["low_death_weight"])
         self.return_distance_weight = float(reward.get("low_return_distance_weight", 0.0))
@@ -35,8 +41,10 @@ class LowReward:
         final_return_distance_sum_m: float = 0.0,
     ) -> tuple[float, dict[str, float]]:
 
-        covered_term = self.covered_weight * float(result.per_uav_owned_max_pre_service.sum())
-        system_term = (-self.system_weight * result.system_max_post_service)
+        covered_term = self.covered_weight * float(result.per_uav_owned_max_pre_service.sum()) / self.backlog_scale
+        backlog = float(result.system_max_post_service)
+        cost = backlog / (backlog + self.backlog_scale) if self.backlog_mode == "bounded" else backlog / self.backlog_scale
+        system_term = -self.system_weight * cost
         oob_term = (-self.oob_weight * float(result.oob_mask.sum()))
         return_failure_term = (-self.death_weight * final_return_failure_count)
         distance_term = -self.return_distance_weight * final_return_distance_sum_m / self.return_distance_scale

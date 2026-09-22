@@ -69,18 +69,22 @@ service:
   mode: full_clear_nearest
 
 reward:
-  low_covered_max_sum_weight: 0.05
-  low_system_max_after_weight: 1.0
-  low_oob_uav_weight: 10.0
-  low_death_weight: 1000.0
-  low_return_distance_weight: 1000.0
+  low_covered_max_sum_weight: 1.0
+  low_backlog_scale_packets: 3000.0
+  low_backlog_mode: bounded
+  low_system_max_after_weight: 0.1
+  low_oob_uav_weight: 0.02
+  low_death_weight: 30.0
+  low_return_distance_weight: 30.0
   low_return_distance_scale_m: 1800.0
   upper_serving_weight: 1.0
-  upper_frame_max_backlog_weight: 1.0  # Maximum bounded backlog cost
-  upper_backlog_mode: bounded
-  upper_backlog_reference_frames: 10.0  # 0.5 packets/s * 600 s/frame * 10 = 3000 packets
-  upper_episode_failure_weight: 1000.0  # Used only when no upper death penalty applies
-  upper_dead_weight: 1000.0
+  upper_frame_max_backlog_weight: 1.0  # Linear cost = weight * backlog / scale
+  upper_backlog_mode: linear
+  upper_backlog_scale_packets: 6000.0  # No clipping: 30000 packets cost 5 reward units
+  upper_charging_weight: 0.05
+  upper_waiting_weight: 0.10
+  upper_episode_failure_weight: 0.0  # Lower-responsibility failures do not penalize upper reward
+  upper_dead_weight: 20.0
 
 metrics:
   coverage_grid_size: 64

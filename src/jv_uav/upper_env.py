@@ -26,6 +26,11 @@ class UpperReward:
         self.serving_weight = float(reward["upper_serving_weight"])
         self.backlog_weight = float(reward["upper_frame_max_backlog_weight"])
         self.dead_weight = float(reward["upper_dead_weight"])
+        self.charging_weight = float(reward.get("upper_charging_weight", 0.0))
+        self.waiting_weight = float(reward.get("upper_waiting_weight", 0.0))
+        self.backlog_scale = float(reward.get("upper_backlog_scale_packets", 1.0))
+        if not np.isfinite(self.backlog_scale) or self.backlog_scale <= 0:
+            raise ValueError("upper_backlog_scale_packets must be positive and finite")
         self.backlog_mode = reward.get("upper_backlog_mode", "linear")
         self.episode_failure_weight = float(reward.get("upper_episode_failure_weight", 0.0))
         if self.backlog_mode not in {"linear", "bounded"}:
@@ -45,17 +50,18 @@ class UpperReward:
 
     def __call__(
         self, serving_count: int, frame_max_mean: float, dead_count: int,
-        *, episode_failed: bool = False,
+        *, episode_failed: bool = False, charging_count: int = 0, waiting_count: int = 0,
     ) -> tuple[float, dict[str, float]]:
-        backlog_cost = frame_max_mean
+        backlog_cost = frame_max_mean / self.backlog_scale
         if self.backlog_mode == "bounded":
             backlog_cost = frame_max_mean / (frame_max_mean + self.backlog_reference)
         terms = {
             "serving": self.serving_weight * serving_count,
             "frame_mean_system_max_post": -self.backlog_weight * backlog_cost,
+            "charging": -self.charging_weight * charging_count,
+            "waiting": -self.waiting_weight * waiting_count,
             "dead": -self.dead_weight * dead_count,
-            # Lower return failure still ends the upper episode. Charge one
-            # team failure cost if no upper-responsibility death was charged.
+            # Retained for legacy checkpoints; new runs set this weight to zero.
             "episode_failure": -self.episode_failure_weight if episode_failed and dead_count == 0 else 0.0,
         }
         return float(sum(terms.values())), terms
@@ -105,8 +111,7 @@ class UpperEnv:
 
         dead_ids = self.scene.dead_ids()
         serving_count = int(np.sum(plan.assigned_status == int(UAVStatus.SERVING)))
-        # Per-UAV final-return penalties belong to the lower level. The upper
-        # reward separately accounts for the shared episode failure below.
+        # Final-return failures belong to the lower level, not upper deaths.
         lower_failure_ids = {
             int(uav_id)
             for step in low_frame.steps
@@ -116,6 +121,8 @@ class UpperEnv:
         reward, reward_terms = self.upper_reward(
             serving_count, low_frame.mean_system_max_post_service, upper_dead_count,
             episode_failed=bool(low_frame.terminated or dead_ids.size),
+            charging_count=int(np.sum(plan.assigned_status == int(UAVStatus.CHARGING))),
+            waiting_count=int(np.sum(plan.assigned_status == int(UAVStatus.WAITING))),
         )
         self.trace.frames.append(self._make_frame_record(plan, low_frame))
 
