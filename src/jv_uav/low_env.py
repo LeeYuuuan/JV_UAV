@@ -12,7 +12,7 @@ from .types import LowStepResult
 
 
 class LowReward:
-    """The requested first-version lower reward, kept separate from metrics."""
+    """Lower service reward with final-return count and distance costs."""
 
     def __init__(self, cfg: Mapping[str, Any]) -> None:
         reward = section(cfg, "reward")
@@ -21,24 +21,32 @@ class LowReward:
         self.system_weight = float(reward["low_system_max_after_weight"])
         self.oob_weight = float(reward["low_oob_uav_weight"])
         self.death_weight = float(reward["low_death_weight"])
+        self.return_distance_weight = float(reward.get("low_return_distance_weight", 0.0))
+        self.return_distance_scale = float(reward.get("low_return_distance_scale_m", 1.0))
+        if (not np.isfinite(self.return_distance_weight) or self.return_distance_weight < 0
+                or not np.isfinite(self.return_distance_scale) or self.return_distance_scale <= 0):
+            raise ValueError("return distance weight must be nonnegative and scale positive, both finite")
 
     def __call__(
         self,
         result: LowStepResult, 
         *,
         final_return_failure_count: int = 0,
+        final_return_distance_sum_m: float = 0.0,
     ) -> tuple[float, dict[str, float]]:
 
         covered_term = self.covered_weight * float(result.per_uav_owned_max_pre_service.sum())
         system_term = (-self.system_weight * result.system_max_post_service)
         oob_term = (-self.oob_weight * float(result.oob_mask.sum()))
         return_failure_term = (-self.death_weight * final_return_failure_count)
+        distance_term = -self.return_distance_weight * final_return_distance_sum_m / self.return_distance_scale
 
         terms = {
             "covered_max_sum": covered_term,
             "system_max_post_service": system_term,
             "oob": oob_term,
             "return_failure": return_failure_term,
+            "return_distance": distance_term,
         }
 
         return float(sum(terms.values())), terms
@@ -101,6 +109,9 @@ class LowEnv:
         result.reward, result.reward_terms = self.reward_model(
             result,
             final_return_failure_count=len(unsafe_serving_ids.copy()),
+            final_return_distance_sum_m=float(np.linalg.norm(
+                result.position_after[unsafe_serving_ids] - self.scene.airship_pos, axis=1
+            ).sum()),
         )
 
 

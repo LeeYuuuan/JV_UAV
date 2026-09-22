@@ -46,7 +46,7 @@ def main():
     parser.add_argument("--plot-every", type=int, help="Overwrite training_curves.png every N upper frames (default: config or 100; 0 disables).")
     parser.add_argument("--resume", type=Path, help="Resume this project's trusted checkpoint, including replay and pending transitions.")
     parser.add_argument("--eval-only", action="store_true")
-    parser.add_argument("--smoke", action="store_true", help="Small networks, six upper steps and a low switch threshold; not convergence training.")
+    parser.add_argument("--smoke", action="store_true", help="Small networks, six upper steps with constant SAC updates; not convergence training.")
     parser.add_argument("--threads", type=int, default=1, help="PyTorch CPU threads; one is efficient for the small smoke networks.")
     args = parser.parse_args()
     if args.log_every is not None and args.log_every <= 0:
@@ -74,7 +74,7 @@ def main():
         cfg = yaml.safe_load(args.train_config.read_text(encoding="utf-8"))
         if args.smoke:
             env_cfg["time"]["episode_upper_frames"] = 3
-            cfg.update(total_upper_steps=6, upper_rollout_steps=2, switch_after_sac_updates=12, checkpoint_every_mappo=1, evaluate_every_mappo=0, evaluation_seeds=[1001])
+            cfg.update(total_upper_steps=6, upper_rollout_steps=2, checkpoint_every_mappo=1, evaluate_every_mappo=0, evaluation_seeds=[1001])
             cfg["sac"].update(hidden=32, heads=2, layers=1, batch_size=8, replay_capacity=256, random_steps=0, learning_starts=0)
             cfg["mappo"].update(hidden=32, epochs=2, minibatch_frames=2)
         trainer = JointTrainer(env_cfg, cfg, device)

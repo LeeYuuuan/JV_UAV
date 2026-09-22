@@ -14,7 +14,7 @@ build. Commands below run from the project root.
 # A short engineering check; this does not train a converged policy.
 python train_joint.py --smoke --device cuda --output runs/smoke
 
-# Default full training: 500000 upper frames (5000 full-length episodes).
+# Default full training: 400000 upper frames (4000 full-length episodes).
 python train_joint.py --device cuda --output runs/joint_full
 
 # Bounded run: 1000 additional upper decisions.
@@ -30,26 +30,25 @@ python train_joint.py --resume runs/joint_001/checkpoint.pt --eval-only --device
 `--upper-steps` means additional steps for this invocation, including on resume.
 Without it, the configured `total_upper_steps` is used. Resume restores the saved
 training/environment configuration; CLI config paths do not override it.
-`--smoke` changes network sizes, horizon, warm-up and update threshold only in
+`--smoke` changes network sizes, horizon, warm-up only in
 memory. It never rewrites the default YAML files.
 
 ## Training budget
 
-The default new run collects 500000 upper frames. Each episode lasts at most
-100 frames, with 10 lower steps per complete frame. This is equivalent to 5000
-full-length episodes and at most 5000000 lower steps. UAV deaths end episodes
+The default new run collects 400000 upper frames. Each episode lasts at most
+100 frames, with 10 lower steps per complete frame. This is equivalent to 4000
+full-length episodes and at most 4000000 lower steps. UAV deaths end episodes
 early, so the actual episode count can be higher. The frame budget stays fixed
-across episode resets and allows 5000 MAPPO update calls from a fresh run.
+across episode resets and allows 4000 MAPPO update calls from a fresh run.
 
 This is an initial training budget, not a convergence guarantee. Compare the
 fixed-seed evaluation returns, backlog and survival across checkpoints before
-deciding whether more training is useful. The SAC frequency switch remains at
-250000 successful SAC updates. Evaluation/checkpoint cadence is unchanged.
+deciding whether more training is useful. SAC updates continue at a constant per-transition rate. Evaluation/checkpoint cadence is unchanged.
 
 An already running process keeps its loaded settings. Old checkpoints also
 retain their saved budget; changing the YAML does not override resume settings.
-To continue to a cumulative target of 500000 frames, pass `--upper-steps` equal
-to 500000 minus the checkpoint's `upper_steps` counter.
+To continue to a cumulative target of 400000 frames, pass `--upper-steps` equal
+to 400000 minus the checkpoint's `upper_steps` counter.
 
 ## Confirmed schedule
 
@@ -67,21 +66,17 @@ intervals are unchanged. Evaluation summaries are printed separately.
 All values are configurable in `configs/training.yaml`:
 
 - Both levels collect and train concurrently; neither is alternately frozen.
-- SAC initially performs one minibatch update per finalized low transition once
+- SAC always performs one minibatch update per finalized low transition once
   warm-up and batch availability permit. A final frame transition can be delayed
-  until the next allocation; it still contributes at most one default early
+  until the next allocation; it still contributes at most one default
   update opportunity.
 - Default warm-up: 1000 random low actions and `learning_starts=1000`; minibatch
   size 256. Skipped updates do not advance `sac_updates`.
 - MAPPO collects 100 upper decisions, across episode resets if needed, then
   performs one PPO update call. One call uses 5 epochs of minibatches containing
   25 frames each, i.e. 20 actor and 20 critic optimizer steps by default.
-- After **250000 successful SAC update calls**, early per-transition SAC updates
-  stop. Each MAPPO update call is then followed by **one SAC minibatch update**.
-- If the threshold is reached inside a MAPPO rollout, the early updates stop
-  immediately; the next completed MAPPO update is followed by the first late SAC
-  update. The 250000th early update and that late update can occur in the same
-  upper rollout.
+- `sac_updates_per_step: 1` stays fixed throughout training. MAPPO updates do
+  not trigger additional SAC updates. The former frequency switch is removed.
 - A run stopping before 100 upper decisions preserves its partial rollout in
   the checkpoint; it does not silently perform an extra partial PPO update.
 
@@ -158,18 +153,16 @@ per-agent policy ratios, clipped value loss and normalized advantages. Actor
 samples share the team advantage; critic samples are counted once per frame.
 There is no independent per-agent reward or occupancy action masking.
 
-Environment rewards and raw evaluation metrics are unchanged. Training uses a
+Raw evaluation backlog metrics remain unchanged. Training uses a
 configurable overall reward multiplier (0.01 for each level) to set optimization
 scale. This is not observation RMS and does not replace reward-weight selection.
-The upper backlog weight in `configs/default.yaml` remains its provisional 1.0;
-the user has not finalized it. Network widths, rates, entropy and optimizer
+The upper backlog weight now caps the bounded cost at 1.0; see the reward section below. Network widths, rates, entropy and optimizer
 settings are starter values, not validated research hyperparameters.
 
 Losses and gradients must be finite. Nonfinite values raise errors rather than
 being silently replaced with zeros. Gradient norms are clipped. Replay retains
 data across upper-policy changes; this implements the requested joint schedule
-but does not eliminate its nonstationarity. Monitor learning before treating
-250000 updates as evidence of convergence.
+but does not eliminate its nonstationarity. Update counts alone are not evidence of convergence.
 
 ## Outputs and recovery
 
@@ -192,8 +185,8 @@ restores state, but cross-device bit-for-bit numerical identity is not promised.
 
 Behavioral tests cover row-permutation behavior with attached identity, padding exclusion, shared
 RMS, independently sized next observations, empty terminal sets, cross-frame
-allocation, terminal/horizon targets, GAE reset boundaries, exact early/late
-schedule counts, CPU checkpoint continuation and read-only seeded evaluation.
+allocation, terminal/horizon targets, GAE reset boundaries, constant per-transition
+update counts, CPU checkpoint continuation and read-only seeded evaluation.
 Run `python -m pytest -q` when pytest is installed. In the current environment
 the same test functions were invoked directly because pytest is absent.
 
@@ -228,10 +221,9 @@ without that flag retain their three-feature architecture and emit a warning;
 resuming them does not apply the identity fix. Start a fresh run for four-feature
 models. This removes forced symmetry but does not itself prove learned coverage.
 
-Unbounded negative backlog costs with early termination can still reward early
-failure over long survival. The lower coverage reward coefficient also differs
-substantially from the old Transformer implementation. Reward redesign remains
-pending confirmation; longer training alone does not resolve it.
+The September 21 revision below bounds the upper backlog cost and adds an
+upper episode-failure cost. The lower coverage/backlog balance remains linear
+and differs from the old Transformer implementation; monitor it independently.
 
 ## Live training curves
 
@@ -253,3 +245,79 @@ history from the checkpoint's directory when using a new output directory.
 Older logs can recover episode returns, but missing full-episode backlog values
 are left blank rather than estimated from frame-end values. These plots are
 training curves; seed-specific evaluation dashboards remain separate.
+
+## Radial sensor map (2026-09-18)
+
+New runs use 150 sensors on the 4000m map: exactly 100 inside the airship-centered
+1800m circle, and 50 outside in the 2000-2400m annulus. Seven clusters comprise
+five inner groups and two outer groups. There are 141 Gaussian cluster points
+(std 100m, within 300m of a center) and 9 independent scattered points. The
+seed-42 point corrections are described below.
+Rejection sampling preserves radial quotas and map boundaries without clipping.
+The outer minimum exceeds 1800m travel plus 173.2m coverage, making a first-frame
+visit from the airship impossible for every outer sensor.
+
+Run `python run_sensor_distribution.py` to regenerate the actual configured map,
+its dashed 1800m circle, CSV coordinates and summary under
+`outputs/sensor_distribution`. Use `--output` or `--config` to override paths.
+The map is reproducible from `map_seed`. Configurations lacking the new
+`distribution` field retain the original `cluster_uniform` generator, so old
+checkpoints preserve their map. Start a new training run for the 150-sensor input
+dimension; resuming a 320-sensor checkpoint does not apply this new map.
+
+
+## Reward and exploration revision (2026-09-21)
+
+The defaults use B = mean of the post-service system maximum backlog over the
+executed low steps in a frame, and B0 = arrival_rate_per_sec * low_step_sec *
+low_steps_per_frame * upper_backlog_reference_frames. B0 is 3000 packets at the
+current defaults (10 frames = 100 simulation minutes).
+
+Upper reward is serving_count - B/(B+B0) - failure_cost. Serving weight stays
+1.0; upper_frame_max_backlog_weight=1.0 is now the maximum backlog cost.
+The cost is 0, 0.5, and 0.909 at B=0, 3000, and 30000. It is monotonic, but
+compresses differences between very large backlogs. This changes the objective
+from linear backlog minimization; always compare raw backlog, coverage, and
+survival, not reward alone. Under the current 6-UAV/4-slot configuration, a
+healthy frame has at least 2 serving UAVs, hence positive upper reward. It no
+longer offers an accumulating negative backlog tail to escape through death.
+
+Upper-responsibility deaths retain -1000 per UAV. If an episode instead fails
+only through lower final-return infeasibility, the upper reward receives one
+-1000 episode_failure cost. This is a shared episode outcome cost, not a second
+per-UAV return cost. It closes the previously unpenalized upper termination
+path. A mixed failure does not add this cost on top of upper death penalties;
+ordinary horizon truncation receives no failure cost. This intentionally
+supersedes the old rule that lower failures carry no upper consequence.
+
+The lower final-return cost is -1000 per failed UAV, plus -1000 * distance/1800m
+for each failed UAV, using the final horizontal distance to the airship. The
+50m climb remains in the physical energy model; the new cost does not change
+battery accounting. Safe far-away UAVs and mid-step deaths do not receive this
+lower distance cost. The original lower collection/backlog reward terms remain
+linear; this revision does not establish their optimal balance or convergence.
+
+Warm-up still lasts 1000 low decisions; learning starts at 1000 with enough
+replay samples. warmup_mode=waypoint keeps a random target across decisions,
+with initial angular sectors assigned by UAV ID and a random episode rotation.
+Targets are sampled 0.25-0.65 map widths from the airship, restricted to the map.
+After arrival another random target is selected. 80% of actions head toward the
+target at 80-100% step speed; 20% sample a random disk action. Map-boundary
+clipping keeps warm-up endpoints inside the map. No sensor positions, backlog,
+future arrivals, energy oracle or learned-policy action replacement is used.
+Targets are reset after episode reset or departure from service, and saved in
+checkpoints for exact resumption. Evaluation always uses the SAC actor.
+
+New training should start in a new output directory WITHOUT --resume. Old
+checkpoints retain their saved reward configuration, replay rewards, and model
+architecture. They are not migrated by loading new YAML. Their retired frequency
+switch is ignored and their former early rate becomes constant; a warning is
+printed. Reusing old replay with a new reward is intentionally unsupported.
+
+## Approved sensor map
+
+The package includes the previously approved 150-sensor map: 100 inside 1800m
+(94 clustered, 6 independent) and 50 outside (47 clustered, 3 independent).
+There are 5 inner and 2 outer clusters. All sensors use the same marker shape.
+For map seed 42 only, independent sensor IDs 42 and 106 are placed at (3300,3600)
+and (3700,3200), preserving the other 148 positions and the outer radial region.

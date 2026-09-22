@@ -1,4 +1,4 @@
-"""Joint training; only actual successful SAC updates advance the switch counter."""
+"""Joint training with a constant number of SAC updates per replay transition."""
 from __future__ import annotations
 
 import copy
@@ -14,13 +14,18 @@ from .mappo import MAPPO
 from .observations import RunningMeanStd, copy_lower, upper_observation
 from .replay import Replay
 from .sac import SAC
+from .exploration import WaypointExploration
 
 
 def validate_training(cfg):
-    for key in ("switch_after_sac_updates", "upper_rollout_steps", "early_sac_updates_per_step", "late_sac_updates_per_mappo"):
+    for key in ("upper_rollout_steps", "sac_updates_per_step"):
         if not isinstance(cfg[key], int) or cfg[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
     sac, ppo = cfg["sac"], cfg["mappo"]
+    if sac.get("warmup_mode", "uniform") not in {"uniform", "waypoint"}:
+        raise ValueError("warmup_mode must be uniform or waypoint")
+    if not 0 <= sac.get("warmup_random_fraction", 0.2) <= 1:
+        raise ValueError("warmup_random_fraction must be in [0, 1]")
     if not isinstance(sac.get("include_uav_id", False), bool):
         raise ValueError("sac.include_uav_id must be boolean")
     for block, keys in ((sac, ("batch_size", "replay_capacity", "hidden", "heads", "layers")), (ppo, ("hidden", "epochs", "minibatch_frames"))):
@@ -43,6 +48,12 @@ def validate_training(cfg):
 
 class JointTrainer:
     def __init__(self, env_cfg, cfg, device="cpu"):
+        cfg = copy.deepcopy(cfg)
+        # Old checkpoints keep their reward/replay data, but never restore the
+        # removed frequency switch. Their former early rate remains constant.
+        cfg.setdefault("sac_updates_per_step", cfg.get("early_sac_updates_per_step", 1))
+        for key in ("switch_after_sac_updates", "early_sac_updates_per_step", "late_sac_updates_per_mappo"):
+            cfg.pop(key, None)
         validate_training(cfg)
         self.env_cfg, self.cfg = copy.deepcopy(env_cfg), copy.deepcopy(cfg)
         self.device = torch.device(device)
@@ -50,6 +61,9 @@ class JointTrainer:
         self.rng = np.random.default_rng(cfg["seed"])
         self.env = build_smoke_test_runner(self.env_cfg).upper_env
         self.env.reset()
+        self.exploration = WaypointExploration(
+            self.env.scene, self.rng, cfg["sac"].get("warmup_random_fraction", 0.2)
+        )
         self.rms = RunningMeanStd(cfg["normalization"]["clip"], cfg["normalization"]["min_std_sec"])
         self.sac = SAC(self.env_cfg, cfg["sac"], self.device)
         self.mappo = MAPPO(self.env.scene.num_uavs, cfg["mappo"], self.device)
@@ -63,10 +77,6 @@ class JointTrainer:
         self.episode_over = False
         self.episode_return = 0.0
 
-    @property
-    def slow_phase(self):
-        return self.sac_updates >= self.cfg["switch_after_sac_updates"]
-
     def _sac_update(self):
         cfg = self.cfg["sac"]
         if self.low_steps < cfg["learning_starts"] or len(self.replay) < cfg["batch_size"]:
@@ -75,10 +85,8 @@ class JointTrainer:
         self.sac_updates += 1
         return True
 
-    def _early_updates(self):
-        for _ in range(self.cfg["early_sac_updates_per_step"]):
-            if self.slow_phase:
-                break
+    def _transition_updates(self):
+        for _ in range(self.cfg["sac_updates_per_step"]):
             self._sac_update()
 
     def _finish_pending(self, next_obs, done):
@@ -86,7 +94,7 @@ class JointTrainer:
             obs, action, reward = self.pending
             self.replay.add(obs, action, reward, next_obs, done)
             self.pending = None
-            self._early_updates()
+            self._transition_updates()
 
     def _low_policy(self, obs):
         # Count each newly encountered decision observation once. Replaying data
@@ -95,6 +103,8 @@ class JointTrainer:
         # At a frame boundary this runs AFTER the next upper allocation.
         self._finish_pending(obs, False)
         if self.low_steps < self.cfg["sac"]["random_steps"]:
+            if self.cfg["sac"].get("warmup_mode", "uniform") == "waypoint":
+                return self.exploration(obs)
             return self.rng.uniform(-1, 1, (len(obs["active_uav_ids"]), 2)).astype(np.float32)
         return self.sac.act(obs, self.rms)
 
@@ -108,11 +118,12 @@ class JointTrainer:
             self.pending = (copy_lower(obs), action.copy(), result.reward)
         else:
             self.replay.add(obs, action, result.reward, self.env.scene.observe_lower(), dead)
-            self._early_updates()
+            self._transition_updates()
 
     def step(self):
         if self.episode_over:
             self.env.reset(reset_rng=False)
+            self.exploration.reset()
             self.episode_return = 0.0
             self.episode_over = False
         observation = upper_observation(self.env.scene, self.env.energy_model)
@@ -134,9 +145,6 @@ class JointTrainer:
             self.rollout.clear()
             self.mappo_updates += 1
             updated = True
-            if self.slow_phase:
-                for _ in range(self.cfg["late_sac_updates_per_mappo"]):
-                    self._sac_update()
         episode_metrics = None
         if done:
             backlog = np.asarray(self.env.trace.backlog_max_post_timeline[1:])
@@ -149,7 +157,7 @@ class JointTrainer:
         return {
             "upper_steps": self.upper_steps, "low_steps": self.low_steps,
             "sac_updates": self.sac_updates, "mappo_updates": self.mappo_updates,
-            "phase": "slow" if self.slow_phase else "early", "episodes": self.episodes,
+            "phase": "joint", "episodes": self.episodes,
             "upper_reward": reward, "episode_return": self.episode_return,
             "episode_metrics": episode_metrics,
             "terminated": bool(terminated), "truncated": bool(truncated),
@@ -240,6 +248,7 @@ class JointTrainer:
             "sac": self.sac.state_dict(), "mappo": self.mappo.state_dict(),
             "rms": self.rms.state_dict(), "replay": self.replay.state_dict(),
             "pending": self.pending, "rollout": self.rollout, "last_losses": self.last_losses,
+            "exploration": self.exploration.state_dict(),
             "counters": {key: getattr(self, key) for key in ("low_steps", "upper_steps", "sac_updates", "mappo_updates", "episodes", "episode_over", "episode_return")},
             "scene": {key: getattr(scene, key).copy() for key in arrays} | {key: getattr(scene, key) for key in clocks},
             "trace": self.env.trace,
@@ -261,6 +270,10 @@ class JointTrainer:
         if state["version"] != 1:
             raise ValueError("unsupported checkpoint version")
         trainer = cls(state["env_cfg"], state["train_cfg"], device)
+        if "switch_after_sac_updates" in state["train_cfg"]:
+            warnings.warn("The retired SAC frequency switch is ignored; per-transition updates continue throughout training.", UserWarning)
+        if state["env_cfg"]["reward"].get("upper_backlog_mode", "linear") != "bounded":
+            warnings.warn("This checkpoint retains its old linear reward and stored replay. Start a fresh run to use the new bounded reward.", UserWarning)
         if trainer.sac.identity_fleet_size is None:
             warnings.warn(
                 "This checkpoint uses legacy ID-free lower observations. Resume preserves "
@@ -273,6 +286,8 @@ class JointTrainer:
         trainer.replay.load_state_dict(state["replay"])
         trainer.pending, trainer.rollout = state["pending"], state["rollout"]
         trainer.last_losses = state["last_losses"]
+        if "exploration" in state:
+            trainer.exploration.load_state_dict(state["exploration"])
         for key, value in state["counters"].items():
             setattr(trainer, key, value)
         for key, value in state["scene"].items():

@@ -18,7 +18,7 @@ torch.set_num_threads(1)
 def trainer_config():
     env, *_ = build_env()
     cfg = yaml.safe_load((ROOT / "configs/training.yaml").read_text())
-    cfg.update(upper_rollout_steps=2, switch_after_sac_updates=3)
+    cfg.update(upper_rollout_steps=2)
     cfg["sac"].update(hidden=16, heads=2, layers=1, batch_size=2, replay_capacity=64, random_steps=0, learning_starts=0)
     cfg["mappo"].update(hidden=16, epochs=1, minibatch_frames=2)
     env["time"]["episode_upper_frames"] = 3
@@ -27,7 +27,7 @@ def trainer_config():
 
 def raw_obs(ids):
     ids = np.array(ids, np.int64)
-    return {"active_uav_ids": ids, "active_uav_features": np.array([[100+i*30, 200+i*10, 0.7] for i in ids], np.float32).reshape(-1, 3), "sensor_last_visit_sec": np.arange(320, dtype=np.float32)}
+    return {"active_uav_ids": ids, "active_uav_features": np.array([[100+i*30, 200+i*10, 0.7] for i in ids], np.float32).reshape(-1, 3), "sensor_last_visit_sec": np.arange(yaml.safe_load((ROOT / "configs/default.yaml").read_text())["sensors"]["count"], dtype=np.float32)}
 
 
 def test_running_stats_are_shared_and_frozen_for_evaluation():
@@ -137,17 +137,25 @@ def test_horizon_and_return_death_never_bootstrap():
             assert row['truncated'] and not row['terminated']
 
 
-def test_schedule_counts_successful_updates_and_pairs_late_updates():
+def test_schedule_updates_each_ready_transition_without_late_reduction():
     env, cfg = trainer_config()
     trainer = JointTrainer(env, cfg)
-    rows = [trainer.step() for _ in range(4)]
-    assert [x['sac_updates'] for x in rows] == [3,4,4,5]
-    assert [x['mappo_updates'] for x in rows] == [0,1,1,2]
-    assert rows[0]['low_steps'] > rows[0]['sac_updates']
+    trainer.sac_updates = 250000
+    previous = trainer.sac_updates
+    for _ in range(4):
+        before = len(trainer.replay)
+        row = trainer.step()
+        inserted = len(trainer.replay) - before
+        # Only the first transition is skipped while the batch is unavailable.
+        expected = inserted - int(before == 0)
+        assert trainer.sac_updates - previous == expected
+        previous = trainer.sac_updates
+        assert row['phase'] == 'joint'
+    assert trainer.mappo_updates == 2
     cfg['sac']['learning_starts'] = 99999
     trainer = JointTrainer(env, cfg)
     trainer.step()
-    assert trainer.sac_updates == 0 and not trainer.slow_phase
+    assert trainer.sac_updates == 0
 
 
 def test_gae_stops_at_episode_boundaries_and_bootstraps_rollout_only():

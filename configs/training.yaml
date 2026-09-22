@@ -5,9 +5,7 @@ total_upper_steps: 400000
 log_every_frames: 50
 plot_every_frames: 100
 upper_rollout_steps: 100
-switch_after_sac_updates: 250000
-early_sac_updates_per_step: 1
-late_sac_updates_per_mappo: 1
+sac_updates_per_step: 1  # Constant throughout training
 checkpoint_every_mappo: 10
 evaluate_every_mappo: 10
 evaluation_seeds: [1001, 1002, 1003]
@@ -27,6 +25,8 @@ sac:
   batch_size: 256
   replay_capacity: 100000
   random_steps: 1000
+  warmup_mode: waypoint
+  warmup_random_fraction: 0.2
   learning_starts: 1000
   reward_scale: 0.01
   max_grad_norm: 1.0
