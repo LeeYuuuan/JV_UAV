@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import gzip
 from pathlib import Path
 import sys
 from time import monotonic
@@ -83,6 +84,10 @@ def main():
     if isinstance(log_every, bool) or not isinstance(log_every, int) or log_every <= 0:
         parser.error("log_every_frames must be a positive integer")
     cfg["log_every_frames"] = log_every
+    disk_log_every = cfg.get("train_log_every_frames", 10)
+    if isinstance(disk_log_every, bool) or not isinstance(disk_log_every, int) or disk_log_every <= 0:
+        parser.error("train_log_every_frames must be a positive integer")
+    cfg["train_log_every_frames"] = disk_log_every
     plot_every = args.plot_every if args.plot_every is not None else cfg.get("plot_every_frames", 100)
     if isinstance(plot_every, bool) or not isinstance(plot_every, int) or plot_every < 0:
         parser.error("plot_every_frames must be a non-negative integer")
@@ -120,8 +125,25 @@ def main():
         with (output / "train.jsonl").open("a", encoding="utf-8") as log:
             for step_index in range(steps):
                 row = trainer.step()
-                log.write(json.dumps(row, allow_nan=False) + "\n")
-                log.flush()
+                if (row['upper_steps'] % disk_log_every == 0 or row['terminated']
+                        or row['truncated'] or row['mappo_updated'] or step_index == steps - 1):
+                    serialized = json.dumps(row, allow_nan=False, separators=(',', ':'))
+                    log.write(serialized + "\n")
+                    log.flush()  # Preserve completed records on process termination.
+                    live_tmp = output / 'live_status.tmp.json'
+                    live_tmp.write_text(serialized, encoding='utf-8')
+                    live_tmp.replace(output / 'live_status.json')
+                if row['episode_metrics'] is not None:
+                    episode_dir = output / 'episodes'
+                    episode_dir.mkdir(exist_ok=True)
+                    path = episode_dir / f"episode_{row['episodes']:06d}.json.gz"
+                    temporary = path.with_suffix('.tmp')
+                    summary = dict(episode=row['episodes'], upper_steps=row['upper_steps'],
+                                   upper_return=row['episode_return'], termination_reason=row['termination_reason'],
+                                   **row['episode_metrics'])
+                    with gzip.open(temporary, 'wt', encoding='utf-8') as stream:
+                        json.dump(summary, stream, allow_nan=False)
+                    temporary.replace(path)
                 if curves is not None:
                     curves.add(row)
                     if (step_index + 1) % plot_every == 0:

@@ -42,6 +42,18 @@ class SAC:
         action, _ = self.actor(batch, deterministic)
         return action[0, :len(obs["active_uav_ids"])].cpu().numpy()
 
+    @torch.no_grad()
+    def action_diagnostics(self, obs, rms):
+        # Inspect distribution parameters without drawing samples or changing RNG.
+        batch = pack_observations([obs], rms, self.world_size, self.device, self.identity_fleet_size)
+        h, _ = self.actor.encoder(batch)
+        mean = self.actor.mean(h)[batch["mask"]]
+        sigma = self.actor.log_std(h).clamp(-5, 2).exp()[batch["mask"]]
+        return dict(components=mean.numel(), mu_abs_mean=float(mean.abs().mean()),
+                    mu_abs_max=float(mean.abs().max()), sigma_mean=float(sigma.mean()),
+                    sigma_min=float(sigma.min()), sigma_max=float(sigma.max()),
+                    deterministic_saturation_fraction=float((mean.tanh().abs() > .99).float().mean()))
+
     def update(self, replay, rms):
         cfg = self.cfg
         obs, action, reward, next_, done = replay.sample(cfg["batch_size"], rms, self.world_size, self.device, self.identity_fleet_size)

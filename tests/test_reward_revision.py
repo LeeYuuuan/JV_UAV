@@ -12,16 +12,16 @@ from jv_uav.rl.exploration import WaypointExploration
 from jv_uav.rl.trainer import JointTrainer
 
 
-def test_linear_backlog_scale_and_no_cap():
+def test_linear_backlog_scale_has_no_cap():
     cfg, *_ = build_env()
     reward = UpperReward(cfg)
-    for backlog, cost in [(0, 0), (300, -0.05), (3000, -0.5), (30000, -5), (60000, -10)]:
+    for backlog, cost in [(0, 0), (300, -0.15), (3000, -1.5), (15000, -7.5), (30000, -15), (60000, -30)]:
         value, terms = reward(2, backlog, 0, charging_count=2, waiting_count=2)
         assert np.isclose(terms['frame_mean_system_max_post'], cost)
-        assert np.isclose(value, 1.7 + cost)
+        assert np.isclose(value, 7 + cost)
     changed = copy.deepcopy(cfg)
     changed['sensors']['arrival_rate_per_sec'] *= 2
-    assert UpperReward(changed)(2, 6000, 0)[1]['frame_mean_system_max_post'] == -1
+    assert UpperReward(changed)(2, 6000, 0)[1]['frame_mean_system_max_post'] == -3
     # Old saved configs retain the previous bounded calculation.
     changed['reward'].update(upper_backlog_mode='bounded', upper_backlog_reference_frames=10)
     assert UpperReward(changed)(2, 6000, 0)[1]['frame_mean_system_max_post'] == -0.5
@@ -51,9 +51,9 @@ def test_only_upper_responsibility_deaths_penalize_upper():
 def test_occupancy_cost_uses_assigned_roles_not_requests_or_released_roles():
     _, _, _, _, env = build_env()
     _, _, _, _, info = env.step(np.ones(6, dtype=np.int8))
-    assert info['reward_terms']['serving'] == 2
-    assert info['reward_terms']['charging'] == -0.1
-    assert info['reward_terms']['waiting'] == -0.2
+    assert info['reward_terms']['serving'] == 10
+    assert info['reward_terms']['charging'] == -2
+    assert info['reward_terms']['waiting'] == -1
 
 
 def test_return_penalty_grows_with_failed_distance_and_only_on_final_step():
@@ -136,15 +136,19 @@ def test_lower_reward_units_and_legacy_compatibility():
     from jv_uav.low_env import LowReward
     cfg, *_ = build_env()
     result = SimpleNamespace(per_uav_owned_max_pre_service=np.array([3000., 3000., 0, 0, 0, 0]),
+                             collected_per_sensor=np.array([3000.,3000.,1500.]),
                              system_max_post_service=3000., oob_mask=np.array([True, False]))
     reward, terms = LowReward(cfg)(result, final_return_failure_count=1, final_return_distance_sum_m=1800)
-    assert np.isclose(terms['covered_max_sum'], 1/3)
-    assert terms['system_max_post_service'] == -0.05
-    assert terms['oob'] == -0.02
+    assert np.isclose(terms['collected_packets'], 1250)
+    assert terms['system_max_post_service'] == -300
+    assert terms['oob'] == -5
     assert terms['return_failure'] + terms['return_distance'] == -60
-    assert np.isclose(reward, 1/3 - 0.05 - 0.02 - 60)
+    assert np.isclose(reward, 1250 - 300 - 5 - 60)
     result.system_max_post_service = 1e12
-    assert -0.1 < LowReward(cfg)(result)[1]['system_max_post_service'] < -0.099
+    assert LowReward(cfg)(result)[1]['system_max_post_service'] == -1e11
+    cfg['reward'].pop('low_collection_mode')
+    cfg['reward'].pop('low_collection_weight')
+    cfg['reward'].pop('low_collection_scale_packets')
     cfg['reward'].pop('low_backlog_mode')
     cfg['reward'].pop('low_backlog_scale_packets')
     cfg['reward'].update(low_covered_max_sum_weight=0.05, low_system_max_after_weight=1)

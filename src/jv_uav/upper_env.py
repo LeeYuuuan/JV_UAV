@@ -31,6 +31,11 @@ class UpperReward:
         self.backlog_scale = float(reward.get("upper_backlog_scale_packets", 1.0))
         if not np.isfinite(self.backlog_scale) or self.backlog_scale <= 0:
             raise ValueError("upper_backlog_scale_packets must be positive and finite")
+        self.backlog_cap = reward.get("upper_backlog_cap")
+        if self.backlog_cap is not None:
+            self.backlog_cap = float(self.backlog_cap)
+            if not np.isfinite(self.backlog_cap) or self.backlog_cap < 0:
+                raise ValueError("upper_backlog_cap must be finite and nonnegative")
         self.backlog_mode = reward.get("upper_backlog_mode", "linear")
         self.episode_failure_weight = float(reward.get("upper_episode_failure_weight", 0.0))
         if self.backlog_mode not in {"linear", "bounded"}:
@@ -55,9 +60,12 @@ class UpperReward:
         backlog_cost = frame_max_mean / self.backlog_scale
         if self.backlog_mode == "bounded":
             backlog_cost = frame_max_mean / (frame_max_mean + self.backlog_reference)
+        penalty = self.backlog_weight * backlog_cost
+        if self.backlog_cap is not None:
+            penalty = min(penalty, self.backlog_cap)
         terms = {
             "serving": self.serving_weight * serving_count,
-            "frame_mean_system_max_post": -self.backlog_weight * backlog_cost,
+            "frame_mean_system_max_post": -penalty,
             "charging": -self.charging_weight * charging_count,
             "waiting": -self.waiting_weight * waiting_count,
             "dead": -self.dead_weight * dead_count,

@@ -17,9 +17,16 @@ class LowReward:
     def __init__(self, cfg: Mapping[str, Any]) -> None:
         reward = section(cfg, "reward")
         uavs = section(cfg, "uavs")
-        self.covered_weight = float(reward["low_covered_max_sum_weight"]) / float(uavs["count"])
+        self.covered_weight = float(reward.get("low_collection_weight", reward.get("low_covered_max_sum_weight", 1.0))) / float(uavs["count"])
+        self.collection_mode = reward.get("low_collection_mode", "owned_max")
+        if self.collection_mode not in {"owned_max", "total_packets"}:
+            raise ValueError("low_collection_mode must be owned_max or total_packets")
         self.system_weight = float(reward["low_system_max_after_weight"])
         self.backlog_scale = float(reward.get("low_backlog_scale_packets", 1.0))
+        # Missing field preserves the shared scale used by older checkpoints.
+        self.collection_scale = float(reward.get("low_collection_scale_packets", self.backlog_scale))
+        if not np.isfinite(self.collection_scale) or self.collection_scale <= 0:
+            raise ValueError("low_collection_scale_packets must be positive and finite")
         self.backlog_mode = reward.get("low_backlog_mode", "linear")
         if not np.isfinite(self.backlog_scale) or self.backlog_scale <= 0:
             raise ValueError("low_backlog_scale_packets must be positive and finite")
@@ -41,7 +48,14 @@ class LowReward:
         final_return_distance_sum_m: float = 0.0,
     ) -> tuple[float, dict[str, float]]:
 
-        covered_term = self.covered_weight * float(result.per_uav_owned_max_pre_service.sum()) / self.backlog_scale
+        if self.collection_mode == "total_packets":
+            # Each sensor has one service owner; overlapping UAVs cannot double count.
+            volume = float(result.collected_per_sensor.sum())
+            collection_key = "collected_packets"
+        else:
+            volume = float(result.per_uav_owned_max_pre_service.sum())
+            collection_key = "covered_max_sum"
+        covered_term = self.covered_weight * volume / self.collection_scale
         backlog = float(result.system_max_post_service)
         cost = backlog / (backlog + self.backlog_scale) if self.backlog_mode == "bounded" else backlog / self.backlog_scale
         system_term = -self.system_weight * cost
@@ -50,7 +64,7 @@ class LowReward:
         distance_term = -self.return_distance_weight * final_return_distance_sum_m / self.return_distance_scale
 
         terms = {
-            "covered_max_sum": covered_term,
+            collection_key: covered_term,
             "system_max_post_service": system_term,
             "oob": oob_term,
             "return_failure": return_failure_term,

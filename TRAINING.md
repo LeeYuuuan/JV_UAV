@@ -60,8 +60,8 @@ The last partial interval is printed on normal completion. `avgN_reward` is the
 mean upper reward over the N frames since the previous line; `avgN_max_backlog`
 is the mean frame-end maximum backlog. `dead` counts UAV deaths in that interval;
 `ep` counts completed episodes. SAC/MAPPO counters are cumulative update calls.
-Full per-frame data still goes to `train.jsonl`; evaluation and checkpoint
-intervals are unchanged. Evaluation summaries are printed separately.
+Disk logs sample every 10 frames and always keep episode endings and MAPPO
+updates. Each written line is flushed immediately; evaluation/checkpoint intervals are unchanged. Evaluation summaries are printed separately.
 
 All values are configurable in `configs/training.yaml`:
 
@@ -278,7 +278,7 @@ Targets are sampled 0.25-0.65 map widths from the airship, restricted to the map
 After arrival another random target is selected. 80% of actions head toward the
 target at 80-100% step speed; 20% sample a random disk action. Map-boundary
 clipping keeps warm-up endpoints inside the map. No sensor positions, backlog,
-future arrivals, energy oracle or learned-policy action replacement is used.
+future arrivals or learned-policy action replacement is used. The optional energy guard below uses the configured physical energy model.
 Targets are reset after episode reset or departure from service, and saved in
 checkpoints for exact resumption. Evaluation always uses the SAC actor.
 
@@ -319,3 +319,165 @@ New-run defaults:
   at each terminal boundary. A rollout update itself does not reset the scene.
 - New defaults require a fresh run. Resume preserves saved configuration, replay,
   optimizer state and partial rollout; editing YAML does not migrate checkpoints.
+
+
+## Initial warm-up coverage diagnostic
+
+Run `python test_warmup_coverage.py --seed 123 --output runs/warmup_coverage_seed123`.
+This uses the current default joint trainer: upper MAPPO samples and updates,
+while lower waypoints explore for exactly 10000 lower environment steps. It
+retains the normal SAC learning threshold (one update may occur at step 10000).
+The final lower callback stops collection immediately; the unfinished upper
+frame is not settled or trained. This diagnostic is not a resumable checkpoint.
+Outputs: `warmup_coverage.png`, `summary.json`, `coverage_data.npz`,
+`upper_frames.json`, and `resolved_config.json`. Coverage is accumulated across
+all episode resets. Sensor visits use actual service ownership, whereas the
+heatmap uses geometric post-move footprints including steps that fail. Neither
+all-sensor discovery nor footprint coverage proves safe policy convergence.
+
+
+## Lower episode diagnostics and pending credit-assignment question
+
+Research question to verify: a far-sensor collection can be followed by boundary
+or return-failure penalties, which can reduce its discounted trajectory return.
+This does not by itself show that going far is inferior. Compare feasible near
+and far routes from matched initial states, arrival RNG and other UAV actions.
+Logging alone is observational, not a controlled counterfactual comparison.
+Current boundary cost is only .02 per UAV; return failure is 30*(1+d/1800).
+
+Each completed episode writes `episodes/episode_XXXXXX.json.gz`, containing lower
+raw return, per-step mean, gamma-discounted return, reward-component sums/means,
+actual collected packets, sensor discovery, death counts, action saturation,
+radial projection and boundary fractions, mean displacement and maximum radius.
+No per-step trajectory is duplicated. Fractions use active UAV decisions (or
+components for saturation), not environment steps. Policy mu/sigma are inspected
+without new random samples every 100 lower decisions AFTER waypoint warm-up;
+`diagnostics_every_low_steps: 0` disables these probes. Probe summaries are
+component-weighted and are not fixed-observation repeated-sampling estimates.
+Warm-up actions still enter executed-action summaries; no SAC mu/sigma probe is
+reported for waypoint actions. Diagnostics never change reward or action choice.
+
+`lower_training_curves.png` is overwritten alongside `training_curves.png` every
+100 upper frames and on normal completion. It includes lower return, mean reward,
+component sums and means, discounted return and collected packets. Component
+panels use a signed symlog axis so small boundary costs remain visible. Returns
+exclude SAC entropy bonuses; discounting starts at the episode's first lower step.
+History is also in `training_curves.json` and terminal rows of `train.jsonl`.
+Partial diagnostic accumulators are checkpointed. Resuming a legacy checkpoint
+mid-episode marks that first summary incomplete; unavailable full-episode lower
+returns remain null and are omitted from plots. Older logs cannot reconstruct
+these missing reward terms. When reusing an output directory after rolling back
+a checkpoint, old future per-episode files may remain until overwritten: use the
+checkpoint-filtered training curves as the authoritative run history.
+
+
+## Energy-aware warm-up with unconstrained random overrides
+
+New runs enable `sac.warmup_energy_guard: true`. The 80% guided branch checks
+whether its candidate move, followed by maximum inward moves for the remaining
+steps of the current frame (hovering once at the airship), leaves enough SOC for
+the configured vertical-then-horizontal return plus a .02 reserve. The forecast
+also checks survival during every simulated serving step and return duration.
+If the forecast is infeasible, guided actions switch to maximum inward movement
+until this UAV exits service or the episode resets. No sensor positions, arrivals
+or backlog enter this decision. No actor observation features are added. The
+exploration controller reads the current frame counter for this forecast only.
+
+The 20% random disk replacement is NOT screened or changed for energy safety.
+Existing map-boundary clipping is preserved. Random actions can invalidate the
+fallback, and an upper decision to continue serving next frame can still exhaust
+battery. Infeasible states are recorded rather than masked or made immortal.
+This guard provides a feasible fallback under its assumptions, not safe returns
+under arbitrary future actions. It affects warm-up only, not learned SAC actions,
+MAPPO decisions, energy physics, rewards, or charging occupancy rules.
+
+Returning modes and cumulative counters are checkpointed. Episode summaries
+include cumulative random/guided action counts, turnbacks and infeasible
+forecasts. Old checkpoints without the flag retain legacy waypoint behavior.
+Use `python test_warmup_coverage.py --legacy-waypoints --seed 123 --output
+runs/warmup_legacy_compare123` for an unguarded comparison. Each seed is a paired
+initialization; trajectories and random consumption can diverge after intervention,
+so this is not an identical-trajectory causal comparison or proof of convergence.
+
+
+## Current reward experiment: raw lower collection / stronger upper service
+
+This section supersedes the earlier reward formulas. New-run defaults:
+- Upper: `5*S - B_frame/2000 - C - 0.5*W - 20*upper_deaths`.
+  B_frame remains the within-frame mean of post-service global maximum backlog.
+  A 30000-packet backlog costs 15 points; there is no cap. Lower-responsibility
+  failures still carry no extra upper penalty.
+- Lower: `sum(owned_max_pre)/6 - B_post/100 - 5*out_of_bounds
+  - 30*sum_failed(1 + horizontal_distance/1800)` for the default six-UAV fleet.
+  The collection term sums each UAV's owned maximum, not all collected packets.
+  Collection scaling and backlog scaling are independent configuration fields.
+  Backlog is linear, not capped; 100/200/500 unserved lower steps add an expected
+  3000/6000/15000 packets per sensor, producing approximately -30/-60/-150.
+  This is growing backlog pressure, not a step-count gate or exact AoI.
+- Both training reward scales stay 1; no optimizer/exploration changes accompany
+  this experiment. Old checkpoints retain their saved reward/replay configuration.
+
+Incremental, modest-size diagnostic output:
+- `train.jsonl`: one compact row every 10 frames, PLUS every episode termination,
+  MAPPO update and normal final frame. Each row is flushed immediately. Set
+  `train_log_every_frames` to change the sampling interval.
+- `live_status.json`: atomically overwritten with the latest logged frame.
+- `episodes/episode_XXXXXX.json.gz`: compressed summary at each episode end,
+  including lower component sums/means and sampled exploration statistics.
+- Both curve images and curve-history JSON update every 100 frames by default;
+  images overwrite previous versions. Checkpoints remain every 1024 frames.
+- Force-killing may lose the in-progress frame/episode and work since the last
+  checkpoint, but earlier flushed logs, closed episode summaries and completed
+  plots remain usable. Flush protects against process termination, not power loss.
+For analysis, share resolved_config.json, train.jsonl, live_status.json,
+training_curves.json, both curve PNGs and optionally the compressed episodes.
+Full replay/checkpoints and every evaluation trace are not necessary for a first
+reward-scale review. If abrupt death stays frequent, episode-summary count grows;
+there is no fixed file-size guarantee.
+
+
+### Correction: uncapped upper backlog; return-cost reduction deferred
+
+Upper backlog is linear B/2000, with no cap in new configurations. Legacy
+checkpoints with an explicit cap preserve it. Boundary cost is now 5 per UAV.
+Return failure remains 30*(1+d/1800); the proposed coefficient 10 is deferred
+because raw collection rewards now reach 100 for a 600-packet owned maximum.
+Check safe versus failed full trajectories before weakening this constraint.
+
+Research issue: larger buffers increase instantaneous collection reward, but
+linear rewards on a single sensor do not automatically make waiting profitable
+across a fixed horizon: early collection can collect the same arrivals sooner.
+The current sum-of-owned-maxima is not additive over packets. Clearing two
+600-packet sensors together yields 100, while clearing each separately can earn
+a reward for both. A different unserved sensor can hold the global max backlog
+penalty unchanged, concealing the benefit of clearing both at once. This can
+incentivize staged service. No collection formula change is made in this revision.
+
+
+## Current collection objective: actual packet throughput
+
+This supersedes earlier owned-maximum collection formulas. The new lower reward
+is `sum(collected_per_sensor)/N - B_post/10 - 5*out_of_bounds
+- 30*sum_failed(1+d/1800)`, with N=6 for this fleet. Each sensor's packets are
+counted once via nearest-owner full-clear service. The positive log term is now
+`collected_packets`; legacy `covered_max_sum` remains supported when reading old
+histories/checkpoints. Neither rewards nor replay are migrated on resume.
+Upper reward, learning settings and exploration are unchanged by this revision.
+
+Discounting favors earlier receipt of the same positive rewards, but does not
+by itself guarantee prompt collection or safe behavior. Making every net reward
+negative can encourage early termination or avoiding useful service. Compare
+complete feasible trajectories instead of requiring penalty > positive reward.
+Packet-throughput rewards remove the owned-maximum batching artifact, but can
+favor dense clusters; the global-max backlog term alone is not a fairness
+or latency guarantee. Arrival-independent age and per-sensor waiting metrics
+may still be useful for later evaluation. No further reward terms are added here.
+
+
+### Current lower backlog coefficient
+
+The latest experiment uses `low_backlog_scale_packets: 10`, superseding the
+previous /100 setting. A sensor unserved for 100/200/500 lower steps accumulates
+an expected 3000/6000/15000 new packets, corresponding to -300/-600/-1500.
+All other reward, observation, exploration, learning and logging settings stay
+unchanged. New runs use this value; resume preserves the saved configuration.

@@ -3,7 +3,9 @@ seed: 123
 # Equivalent to 4000 full-length episodes of 100 frames.
 total_upper_steps: 400000
 log_every_frames: 50
+train_log_every_frames: 10  # Also log every episode end and MAPPO update
 plot_every_frames: 100
+diagnostics_every_low_steps: 100  # Distribution probe only; 0 disables it
 upper_rollout_steps: 512
 sac_updates_per_step: 1  # Constant throughout training
 checkpoint_every_mappo: 2
@@ -27,6 +29,8 @@ sac:
   random_steps: 10000
   warmup_mode: waypoint
   warmup_random_fraction: 0.2
+  warmup_energy_guard: true
+  warmup_return_reserve_frac: 0.02  # Extra SOC margin for guided actions only
   learning_starts: 10000
   reward_scale: 1.0
   max_grad_norm: 1.0

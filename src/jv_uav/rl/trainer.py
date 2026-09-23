@@ -15,12 +15,16 @@ from .observations import RunningMeanStd, copy_lower, upper_observation
 from .replay import Replay
 from .sac import SAC
 from .exploration import WaypointExploration
+from .diagnostics import EpisodeDiagnostics
 
 
 def validate_training(cfg):
     for key in ("upper_rollout_steps", "sac_updates_per_step"):
         if not isinstance(cfg[key], int) or cfg[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")
+    interval = cfg.get("diagnostics_every_low_steps", 100)
+    if not isinstance(interval, int) or isinstance(interval, bool) or interval < 0:
+        raise ValueError("diagnostics_every_low_steps must be a nonnegative integer")
     sac, ppo = cfg["sac"], cfg["mappo"]
     if sac.get("warmup_mode", "uniform") not in {"uniform", "waypoint"}:
         raise ValueError("warmup_mode must be uniform or waypoint")
@@ -68,7 +72,10 @@ class JointTrainer:
         self.env = build_smoke_test_runner(self.env_cfg).upper_env
         self.env.reset()
         self.exploration = WaypointExploration(
-            self.env.scene, self.rng, cfg["sac"].get("warmup_random_fraction", 0.2)
+            self.env.scene, self.rng, cfg["sac"].get("warmup_random_fraction", 0.2),
+            energy_guard=cfg["sac"].get("warmup_energy_guard", False),
+            reserve_frac=cfg["sac"].get("warmup_return_reserve_frac", 0.02),
+            energy_model=self.env.energy_model,
         )
         self.rms = RunningMeanStd(cfg["normalization"]["clip"], cfg["normalization"]["min_std_sec"])
         self.sac = SAC(self.env_cfg, cfg["sac"], self.device)
@@ -82,6 +89,7 @@ class JointTrainer:
         self.last_losses = {}
         self.episode_over = False
         self.episode_return = 0.0
+        self.diagnostics = EpisodeDiagnostics(cfg["sac"]["gamma"])
 
     def _sac_update(self):
         cfg = self.cfg["sac"]
@@ -112,10 +120,16 @@ class JointTrainer:
             if self.cfg["sac"].get("warmup_mode", "uniform") == "waypoint":
                 return self.exploration(obs)
             return self.rng.uniform(-1, 1, (len(obs["active_uav_ids"]), 2)).astype(np.float32)
-        return self.sac.act(obs, self.rms)
+        action = self.sac.act(obs, self.rms)
+        interval = self.cfg.get("diagnostics_every_low_steps", 100)
+        if interval and self.low_steps % interval == 0:
+            self.diagnostics.probes.append(self.sac.action_diagnostics(obs, self.rms))
+        return action
 
     def _low_step(self, obs, action, result):
         self.low_steps += 1
+        self.diagnostics.record(result, action, self.env.scene.airship_pos,
+                                self.env.scene.sensor_pos, warmup=self.low_steps <= self.cfg["sac"]["random_steps"])
         dead = bool(result.dead_during_step.size or result.return_unsafe_ids.size)
         final = result.step_in_frame == self.env.scene.low_steps_per_frame - 1
         if final and not dead:
@@ -131,6 +145,7 @@ class JointTrainer:
             self.env.reset(reset_rng=False)
             self.exploration.reset()
             self.episode_return = 0.0
+            self.diagnostics = EpisodeDiagnostics(self.cfg["sac"]["gamma"])
             self.episode_over = False
         observation = upper_observation(self.env.scene, self.env.energy_model)
         action, logp, value = self.mappo.act(observation)
@@ -160,6 +175,8 @@ class JointTrainer:
                 "low_steps": self.env.scene.low_step_total,
                 "frames": len(self.env.trace.frames),
             }
+            episode_metrics.update(self.diagnostics.summary(self.env.scene.low_step_total))
+            episode_metrics["warmup_exploration_counts_total"] = dict(self.exploration.counts)
         return {
             "upper_steps": self.upper_steps, "low_steps": self.low_steps,
             "sac_updates": self.sac_updates, "mappo_updates": self.mappo_updates,
@@ -255,6 +272,7 @@ class JointTrainer:
             "rms": self.rms.state_dict(), "replay": self.replay.state_dict(),
             "pending": self.pending, "rollout": self.rollout, "last_losses": self.last_losses,
             "exploration": self.exploration.state_dict(),
+            "episode_diagnostics": self.diagnostics.state_dict(),
             "counters": {key: getattr(self, key) for key in ("low_steps", "upper_steps", "sac_updates", "mappo_updates", "episodes", "episode_over", "episode_return")},
             "scene": {key: getattr(scene, key).copy() for key in arrays} | {key: getattr(scene, key) for key in clocks},
             "trace": self.env.trace,
@@ -278,14 +296,21 @@ class JointTrainer:
         trainer = cls(state["env_cfg"], state["train_cfg"], device)
         if "switch_after_sac_updates" in state["train_cfg"]:
             warnings.warn("The retired SAC frequency switch is ignored; per-transition updates continue throughout training.", UserWarning)
-        if state["env_cfg"]["reward"].get("upper_backlog_scale_packets") != 6000.0 or state["env_cfg"]["reward"].get("upper_backlog_mode", "linear") != "linear":
-            warnings.warn("This checkpoint retains its saved reward configuration and replay. Start a fresh run to use the revised linear upper reward.", UserWarning)
+        saved_reward = state["env_cfg"]["reward"]
+        if (saved_reward.get("upper_backlog_scale_packets") != 2000.0
+                or saved_reward.get("upper_backlog_cap") is not None
+                or saved_reward.get("low_collection_mode") != "total_packets"
+                or saved_reward.get("low_collection_scale_packets") != 1.0
+                or saved_reward.get("low_backlog_scale_packets") != 10.0):
+            warnings.warn("This checkpoint retains its saved reward configuration and replay. Start a fresh run to use the revised reward scales.", UserWarning)
         if trainer.sac.identity_fleet_size is None:
             warnings.warn(
                 "This checkpoint uses legacy ID-free lower observations. Resume preserves "
                 "that architecture; start a fresh run with include_uav_id=true for identity features.",
                 UserWarning,
             )
+        if "episode_diagnostics" in state:
+            trainer.diagnostics.load_state_dict(state["episode_diagnostics"])
         trainer.sac.load_state_dict(state["sac"])
         trainer.mappo.load_state_dict(state["mappo"])
         trainer.rms.load_state_dict(state["rms"])
