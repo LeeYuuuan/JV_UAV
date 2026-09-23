@@ -301,7 +301,11 @@ class JointTrainer:
                 or saved_reward.get("upper_backlog_cap") is not None
                 or saved_reward.get("low_collection_mode") != "total_packets"
                 or saved_reward.get("low_collection_scale_packets") != 1.0
-                or saved_reward.get("low_backlog_scale_packets") != 10.0):
+                or saved_reward.get("low_backlog_scale_packets") != 10.0
+                or saved_reward.get("low_death_weight") != 500.0
+                or saved_reward.get("low_return_distance_weight") != 500.0
+                or saved_reward.get("upper_dead_weight") != 20.0
+                or saved_reward.get("upper_lower_return_failure_weight", 0.0) != 15.0):
             warnings.warn("This checkpoint retains its saved reward configuration and replay. Start a fresh run to use the revised reward scales.", UserWarning)
         if trainer.sac.identity_fleet_size is None:
             warnings.warn(

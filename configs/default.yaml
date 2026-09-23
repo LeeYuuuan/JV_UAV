@@ -76,8 +76,8 @@ reward:
   low_backlog_mode: linear
   low_system_max_after_weight: 1.0
   low_oob_uav_weight: 5.0
-  low_death_weight: 30.0
-  low_return_distance_weight: 30.0
+  low_death_weight: 500.0
+  low_return_distance_weight: 500.0
   low_return_distance_scale_m: 1800.0
   upper_serving_weight: 5.0
   upper_frame_max_backlog_weight: 1.0  # Linear cost = weight * backlog / scale
@@ -85,7 +85,8 @@ reward:
   upper_backlog_scale_packets: 2000.0  # Linear, uncapped: 30000 packets cost 15
   upper_charging_weight: 1.0
   upper_waiting_weight: 0.5
-  upper_episode_failure_weight: 0.0  # Lower-responsibility failures do not penalize upper reward
+  upper_episode_failure_weight: 0.0  # Legacy episode-level cost, disabled
+  upper_lower_return_failure_weight: 15.0  # Shared responsibility, per failed UAV
   upper_dead_weight: 20.0
 
 metrics:

@@ -18,6 +18,7 @@ import yaml
 from jv_uav import load_config
 from jv_uav.rl.trainer import JointTrainer
 from jv_uav.rl.curves import TrainingCurves
+from jv_uav.rl.provenance import record_run
 
 
 def format_progress(rows, elapsed):
@@ -41,6 +42,7 @@ def main():
     parser.add_argument("--env-config", type=Path, default=ROOT / "configs/default.yaml")
     parser.add_argument("--train-config", type=Path, default=ROOT / "configs/training.yaml")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--run-note", default="", help="Short experiment description saved with source and effective configuration.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--upper-steps", type=int, help="Additional upper environment steps in this invocation.")
     parser.add_argument("--log-every", type=int, help="Console summary interval in upper frames (default: config or 50); also overrides resume settings.")
@@ -95,6 +97,7 @@ def main():
     if cfg["checkpoint_every_mappo"] < 0 or cfg["evaluate_every_mappo"] < 0:
         parser.error("checkpoint/evaluation intervals cannot be negative")
     (output / "resolved_config.json").write_text(json.dumps({"environment": trainer.env_cfg, "training": cfg, "device": device}, indent=2), encoding="utf-8")
+    record_run(ROOT, output, trainer, args)
 
     def evaluate(label):
         summaries = []

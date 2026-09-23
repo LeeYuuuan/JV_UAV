@@ -26,6 +26,9 @@ class UpperReward:
         self.serving_weight = float(reward["upper_serving_weight"])
         self.backlog_weight = float(reward["upper_frame_max_backlog_weight"])
         self.dead_weight = float(reward["upper_dead_weight"])
+        self.lower_return_failure_weight = float(reward.get("upper_lower_return_failure_weight", 0.0))
+        if not np.isfinite(self.lower_return_failure_weight) or self.lower_return_failure_weight < 0:
+            raise ValueError("upper_lower_return_failure_weight must be finite and nonnegative")
         self.charging_weight = float(reward.get("upper_charging_weight", 0.0))
         self.waiting_weight = float(reward.get("upper_waiting_weight", 0.0))
         self.backlog_scale = float(reward.get("upper_backlog_scale_packets", 1.0))
@@ -56,6 +59,7 @@ class UpperReward:
     def __call__(
         self, serving_count: int, frame_max_mean: float, dead_count: int,
         *, episode_failed: bool = False, charging_count: int = 0, waiting_count: int = 0,
+        lower_return_failure_count: int = 0,
     ) -> tuple[float, dict[str, float]]:
         backlog_cost = frame_max_mean / self.backlog_scale
         if self.backlog_mode == "bounded":
@@ -69,6 +73,7 @@ class UpperReward:
             "charging": -self.charging_weight * charging_count,
             "waiting": -self.waiting_weight * waiting_count,
             "dead": -self.dead_weight * dead_count,
+            "lower_return_failure": -self.lower_return_failure_weight * lower_return_failure_count,
             # Retained for legacy checkpoints; new runs set this weight to zero.
             "episode_failure": -self.episode_failure_weight if episode_failed and dead_count == 0 else 0.0,
         }
@@ -119,7 +124,8 @@ class UpperEnv:
 
         dead_ids = self.scene.dead_ids()
         serving_count = int(np.sum(plan.assigned_status == int(UAVStatus.SERVING)))
-        # Final-return failures belong to the lower level, not upper deaths.
+        # Final-return failures carry a separate shared-responsibility cost;
+        # exclude them from the ordinary upper death count to avoid double charging.
         lower_failure_ids = {
             int(uav_id)
             for step in low_frame.steps
@@ -131,6 +137,7 @@ class UpperEnv:
             episode_failed=bool(low_frame.terminated or dead_ids.size),
             charging_count=int(np.sum(plan.assigned_status == int(UAVStatus.CHARGING))),
             waiting_count=int(np.sum(plan.assigned_status == int(UAVStatus.WAITING))),
+            lower_return_failure_count=len(lower_failure_ids),
         )
         self.trace.frames.append(self._make_frame_record(plan, low_frame))
 

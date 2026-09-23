@@ -27,12 +27,13 @@ def test_linear_backlog_scale_has_no_cap():
     assert UpperReward(changed)(2, 6000, 0)[1]['frame_mean_system_max_post'] == -0.5
 
 
-def test_only_upper_responsibility_deaths_penalize_upper():
+def test_upper_deaths_and_shared_return_failures_have_separate_costs():
     _, scene, _, _, env = build_env()
     scene.uav_battery.fill(0.44)
     _, _, terminated, _, info = env.step(np.zeros(6, dtype=np.int8))
     assert terminated
     assert info['reward_terms']['dead'] == 0
+    assert info['reward_terms']['lower_return_failure'] == -90
     assert info['reward_terms']['episode_failure'] == 0
     assert info['low_frame'].steps[-1].reward_terms['return_failure'] < 0
     _, scene, _, _, env = build_env()
@@ -40,11 +41,13 @@ def test_only_upper_responsibility_deaths_penalize_upper():
     _, _, terminated, _, info = env.step(np.zeros(6, dtype=np.int8))
     assert terminated
     assert info['reward_terms']['dead'] == -20
+    assert info['reward_terms']['lower_return_failure'] == 0
     assert info['reward_terms']['episode_failure'] == 0
     _, scene, _, _, env = build_env()
     env.max_frames = 1
     _, _, terminated, truncated, info = env.step(np.zeros(6, dtype=np.int8))
     assert truncated and not terminated
+    assert info['reward_terms']['lower_return_failure'] == 0
     assert info['reward_terms']['episode_failure'] == 0
 
 
@@ -68,10 +71,12 @@ def test_return_penalty_grows_with_failed_distance_and_only_on_final_step():
         assert len(steps) == 10
         assert all(s.reward_terms['return_distance'] == 0 for s in steps[:-1])
         np.testing.assert_array_equal(steps[-1].return_unsafe_ids, [0])
+        assert info['reward_terms']['lower_return_failure'] == -15
+        assert info['reward_terms']['dead'] == 0
         terms = steps[-1].reward_terms
-        assert terms['return_distance'] == -30 * distance / 1800
+        assert terms['return_distance'] == -500 * distance / 1800
         totals.append(terms['return_failure'] + terms['return_distance'])
-    assert totals == [-30, -45, -60]
+    assert totals == [-500, -750, -1000]
     _, scene, _, _, env = build_env()
     scene.uav_pos[0] = scene.airship_pos + [1800, 0]
     _, _, terminated, _, info = env.step(np.zeros(6, dtype=np.int8))
@@ -142,8 +147,8 @@ def test_lower_reward_units_and_legacy_compatibility():
     assert np.isclose(terms['collected_packets'], 1250)
     assert terms['system_max_post_service'] == -300
     assert terms['oob'] == -5
-    assert terms['return_failure'] + terms['return_distance'] == -60
-    assert np.isclose(reward, 1250 - 300 - 5 - 60)
+    assert terms['return_failure'] + terms['return_distance'] == -1000
+    assert np.isclose(reward, 1250 - 300 - 5 - 1000)
     result.system_max_post_service = 1e12
     assert LowReward(cfg)(result)[1]['system_max_post_service'] == -1e11
     cfg['reward'].pop('low_collection_mode')
