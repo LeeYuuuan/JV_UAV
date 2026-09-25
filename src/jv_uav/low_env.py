@@ -30,8 +30,8 @@ class LowReward:
         self.backlog_mode = reward.get("low_backlog_mode", "linear")
         if not np.isfinite(self.backlog_scale) or self.backlog_scale <= 0:
             raise ValueError("low_backlog_scale_packets must be positive and finite")
-        if self.backlog_mode not in {"linear", "bounded"}:
-            raise ValueError("low_backlog_mode must be linear or bounded")
+        if self.backlog_mode not in {"linear", "bounded", "quadratic"}:
+            raise ValueError("low_backlog_mode must be linear, bounded or quadratic")
         self.oob_weight = float(reward["low_oob_uav_weight"])
         self.death_weight = float(reward["low_death_weight"])
         self.return_distance_weight = float(reward.get("low_return_distance_weight", 0.0))
@@ -58,6 +58,8 @@ class LowReward:
         covered_term = self.covered_weight * volume / self.collection_scale
         backlog = float(result.system_max_post_service)
         cost = backlog / (backlog + self.backlog_scale) if self.backlog_mode == "bounded" else backlog / self.backlog_scale
+        if self.backlog_mode == "quadratic":
+            cost = cost ** 2
         system_term = -self.system_weight * cost
         oob_term = (-self.oob_weight * float(result.oob_mask.sum()))
         return_failure_term = (-self.death_weight * final_return_failure_count)

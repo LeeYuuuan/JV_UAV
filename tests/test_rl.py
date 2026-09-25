@@ -46,14 +46,19 @@ def test_upper_observation_contains_only_confirmed_features():
     _, scene, energy, _, _ = build_env()
     scene.uav_status[0] = 2
     scene.uav_status[1] = 1
+    scene.uav_pos[2] = scene.airship_pos + [1800, 0]
+    scene.uav_battery[2] = .1
     obs = upper_observation(scene, energy)
-    assert obs['actor'].shape == (6, 19)
-    assert obs['critic'].shape == (38,)
-    np.testing.assert_array_equal(obs['actor'][:, :6], np.tile(scene.uav_battery, (6, 1)))
+    assert obs['actor'].shape == (6, 18)
+    assert obs['critic'].shape == (32,)
+    expected = scene.uav_battery - energy.return_trip(scene.uav_pos, scene.airship_pos).energy_frac
+    expected[:2] = scene.uav_battery[:2]
+    np.testing.assert_array_equal(obs['actor'][:, :6], np.tile(expected, (6, 1)))
+    np.testing.assert_array_equal(obs['critic'][:30].reshape(6, 5)[:, 0], expected)
+    assert expected[2] < 0
     np.testing.assert_array_equal(obs['actor'][:, 6:12], np.eye(6))
     np.testing.assert_array_equal(obs['actor'][0, 12:16], [0, 0, 1, 0])
     np.testing.assert_allclose(obs['actor'][:, 16:18], 0.5)
-    assert obs['actor'][0, -1] == obs['actor'][1, -1] == 0
     scene.sensor_backlog += 999
     for key, value in upper_observation(scene, energy).items():
         np.testing.assert_array_equal(value, obs[key])

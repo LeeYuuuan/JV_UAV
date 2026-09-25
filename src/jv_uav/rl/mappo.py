@@ -23,8 +23,12 @@ def gae(rewards, values, dones, last_value, gamma, lam):
 class MAPPO:
     def __init__(self, fleet, cfg, device):
         self.cfg, self.device = cfg, torch.device(device)
-        self.actor = mlp(2 * fleet + 7, cfg["hidden"], 1).to(device)
-        self.critic = mlp(6 * fleet + 2, cfg["hidden"], 1).to(device)
+        self.observation_mode = cfg.get("observation_mode", "current_soc_return_time")
+        if self.observation_mode not in ("arrival_soc", "current_soc_return_time"):
+            raise ValueError("unknown upper observation mode")
+        arrival = self.observation_mode == "arrival_soc"
+        self.actor = mlp(2 * fleet + (6 if arrival else 7), cfg["hidden"], 1).to(device)
+        self.critic = mlp((5 if arrival else 6) * fleet + 2, cfg["hidden"], 1).to(device)
         # Begin with unbiased request logits; requests are not slot allocations.
         torch.nn.init.orthogonal_(self.actor[-1].weight, gain=0.01)
         torch.nn.init.zeros_(self.actor[-1].bias)

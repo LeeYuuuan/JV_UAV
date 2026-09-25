@@ -15,7 +15,7 @@ from .observations import RunningMeanStd, copy_lower, upper_observation
 from .replay import Replay
 from .sac import SAC
 from .exploration import WaypointExploration
-from .diagnostics import EpisodeDiagnostics
+from .diagnostics import EpisodeDiagnostics, charging_record
 
 
 def validate_training(cfg):
@@ -147,9 +147,11 @@ class JointTrainer:
             self.episode_return = 0.0
             self.diagnostics = EpisodeDiagnostics(self.cfg["sac"]["gamma"])
             self.episode_over = False
-        observation = upper_observation(self.env.scene, self.env.energy_model)
+        observation = upper_observation(self.env.scene, self.env.energy_model, self.mappo.observation_mode)
         action, logp, value = self.mappo.act(observation)
         _, reward, terminated, truncated, info = self.env.step(action)
+        charging = charging_record(info)
+        self.diagnostics.record_charging(charging)
         self.upper_steps += 1
         self.episode_return += reward
         done = terminated or truncated
@@ -161,7 +163,7 @@ class JointTrainer:
         self.rollout.append({"obs": observation, "action": action.copy(), "logp": logp.copy(), "value": value, "reward": reward, "done": done})
         updated = False
         if len(self.rollout) == self.cfg["upper_rollout_steps"]:
-            last_value = 0.0 if done else self.mappo.value(upper_observation(self.env.scene, self.env.energy_model))
+            last_value = 0.0 if done else self.mappo.value(upper_observation(self.env.scene, self.env.energy_model, self.mappo.observation_mode))
             self.last_losses.update(self.mappo.update(self.rollout, last_value, upper_steps=self.upper_steps))
             self.rollout.clear()
             self.mappo_updates += 1
@@ -195,6 +197,7 @@ class JointTrainer:
             "waiting_assignments": int(np.sum(info["frame_plan"].assigned_status == 1)),
             "charge_added_soc": float(np.sum(info["settlement"].get("charge_added_frac", 0.0))),
             "upper_reward_terms": dict(info["reward_terms"]),
+            "charging_diagnostics": charging,
             **self.last_losses,
         }
 
@@ -212,7 +215,7 @@ class JointTrainer:
         policy_trace = []
         charge_added = np.zeros(env.scene.num_uavs, dtype=np.float64)
         while True:
-            obs = upper_observation(env.scene, env.energy_model)
+            obs = upper_observation(env.scene, env.energy_model, self.mappo.observation_mode)
             probabilities = self.mappo.request_probabilities(obs)
             action, _, _ = self.mappo.act(obs, deterministic=True)
             _, reward, terminated, truncated, info = env.step(action)
@@ -221,6 +224,7 @@ class JointTrainer:
             charge_added += added
             policy_trace.append({
                 "frame": len(policy_trace) + 1,
+                "charging_diagnostics": charging_record(info),
                 "request_probabilities": probabilities.tolist(),
                 "actions": action.tolist(),
                 "assigned_status": plan.assigned_status.tolist(),
@@ -237,12 +241,15 @@ class JointTrainer:
                 break
         summary = {"seed": seed, "upper_return": total_return, "low_steps": env.scene.low_step_total, "frames": len(env.trace.frames), "dead_ids": env.scene.dead_ids().tolist(), "mean_max_backlog": float(np.mean(env.trace.backlog_max_post_timeline[1:])), "terminated": bool(terminated), "truncated": bool(truncated)}
         summary.update(
+            charging_counts={key: sum(row['charging_diagnostics']['counts'][key] for row in policy_trace)
+                             for key in policy_trace[0]['charging_diagnostics']['counts']},
             configured_frames=env.max_frames,
             configured_low_steps=env.max_frames * env.scene.low_steps_per_frame,
             completed_horizon=bool(truncated),
             termination_reason=env.trace.frames[-1].termination_reason if terminated else "horizon_reached",
             policy_mode="deterministic",
             lower_identity_features=self.sac.identity_fleet_size is not None,
+            upper_observation_mode=self.mappo.observation_mode,
             charge_requests=sum(sum(row["actions"]) for row in policy_trace),
             charging_assignments=sum(row["assigned_status"].count(2) for row in policy_trace),
             waiting_assignments=sum(row["assigned_status"].count(1) for row in policy_trace),
@@ -297,15 +304,24 @@ class JointTrainer:
         if "switch_after_sac_updates" in state["train_cfg"]:
             warnings.warn("The retired SAC frequency switch is ignored; per-transition updates continue throughout training.", UserWarning)
         saved_reward = state["env_cfg"]["reward"]
+        saved_ppo = state["train_cfg"]["mappo"]
+        if trainer.mappo.observation_mode != "arrival_soc":
+            warnings.warn("This checkpoint retains the legacy upper current-SOC/return-time inputs. Start a fresh run for arrival-SOC inputs.", UserWarning)
+        if (saved_ppo.get("entropy_coef") != 0.05
+                or saved_ppo.get("entropy_end_coef", saved_ppo.get("entropy_coef")) != 0.05):
+            warnings.warn("This checkpoint preserves its saved MAPPO entropy settings. Start a fresh run to use constant entropy_coef=0.05.", UserWarning)
         if (saved_reward.get("upper_backlog_scale_packets") != 2000.0
                 or saved_reward.get("upper_backlog_cap") is not None
                 or saved_reward.get("low_collection_mode") != "total_packets"
-                or saved_reward.get("low_collection_scale_packets") != 1.0
-                or saved_reward.get("low_backlog_scale_packets") != 10.0
+                or saved_reward.get("low_collection_scale_packets") != 30.0
+                or saved_reward.get("low_backlog_scale_packets") != 2000.0
+                or saved_reward.get("low_backlog_mode") != "quadratic"
                 or saved_reward.get("low_death_weight") != 500.0
                 or saved_reward.get("low_return_distance_weight") != 500.0
                 or saved_reward.get("upper_dead_weight") != 20.0
-                or saved_reward.get("upper_lower_return_failure_weight", 0.0) != 15.0):
+                or saved_reward.get("upper_lower_return_failure_weight", 0.0) != 15.0
+                or saved_reward.get("upper_charging_weight", 0.0) != 0.0
+                or saved_reward.get("upper_waiting_weight", 0.0) != 0.0):
             warnings.warn("This checkpoint retains its saved reward configuration and replay. Start a fresh run to use the revised reward scales.", UserWarning)
         if trainer.sac.identity_fleet_size is None:
             warnings.warn(

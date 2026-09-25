@@ -125,9 +125,14 @@ def main():
     console_rows = []
     curves = TrainingCurves(output, resume=args.resume, upper_steps=trainer.upper_steps) if plot_every else None
     try:
-        with (output / "train.jsonl").open("a", encoding="utf-8") as log:
+        with (output / "train.jsonl").open("a", encoding="utf-8") as log, gzip.open(
+                output / 'charging_frames.jsonl.gz', 'at', encoding='utf-8', compresslevel=5) as charge_log:
             for step_index in range(steps):
                 row = trainer.step()
+                charge_log.write(json.dumps(dict(upper_steps=row['upper_steps'],
+                    episode=trainer.episodes if trainer.episode_over else trainer.episodes + 1,
+                    **row['charging_diagnostics']), separators=(',', ':')) + '\n')
+                charge_log.flush()  # Persist every completed frame, independently of console output.
                 if (row['upper_steps'] % disk_log_every == 0 or row['terminated']
                         or row['truncated'] or row['mappo_updated'] or step_index == steps - 1):
                     serialized = json.dumps(row, allow_nan=False, separators=(',', ':'))

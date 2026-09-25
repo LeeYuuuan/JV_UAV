@@ -18,7 +18,7 @@ def test_linear_backlog_scale_has_no_cap():
     for backlog, cost in [(0, 0), (300, -0.15), (3000, -1.5), (15000, -7.5), (30000, -15), (60000, -30)]:
         value, terms = reward(2, backlog, 0, charging_count=2, waiting_count=2)
         assert np.isclose(terms['frame_mean_system_max_post'], cost)
-        assert np.isclose(value, 7 + cost)
+        assert np.isclose(value, 10 + cost)
     changed = copy.deepcopy(cfg)
     changed['sensors']['arrival_rate_per_sec'] *= 2
     assert UpperReward(changed)(2, 6000, 0)[1]['frame_mean_system_max_post'] == -3
@@ -42,6 +42,8 @@ def test_upper_deaths_and_shared_return_failures_have_separate_costs():
     assert terminated
     assert info['reward_terms']['dead'] == -20
     assert info['reward_terms']['lower_return_failure'] == 0
+    assert info['low_frame'].steps[-1].reward_terms['return_failure'] == 0
+    assert info['low_frame'].steps[-1].reward_terms['return_distance'] == 0
     assert info['reward_terms']['episode_failure'] == 0
     _, scene, _, _, env = build_env()
     env.max_frames = 1
@@ -53,10 +55,22 @@ def test_upper_deaths_and_shared_return_failures_have_separate_costs():
 
 def test_occupancy_cost_uses_assigned_roles_not_requests_or_released_roles():
     _, _, _, _, env = build_env()
+    # Nonzero costs remain supported for old checkpoints and custom experiments.
+    env.upper_reward.charging_weight = 1.0
+    env.upper_reward.waiting_weight = 0.5
     _, _, _, _, info = env.step(np.ones(6, dtype=np.int8))
     assert info['reward_terms']['serving'] == 10
     assert info['reward_terms']['charging'] == -2
     assert info['reward_terms']['waiting'] == -1
+
+
+def test_default_charging_and_waiting_have_no_direct_penalty():
+    _, _, _, _, env = build_env()
+    _, reward, _, _, info = env.step(np.ones(6, dtype=np.int8))
+    terms = info['reward_terms']
+    assert terms['charging'] == 0 and terms['waiting'] == 0
+    assert terms['serving'] == 10
+    assert np.isclose(reward, sum(terms.values()))
 
 
 def test_return_penalty_grows_with_failed_distance_and_only_on_final_step():
@@ -144,13 +158,13 @@ def test_lower_reward_units_and_legacy_compatibility():
                              collected_per_sensor=np.array([3000.,3000.,1500.]),
                              system_max_post_service=3000., oob_mask=np.array([True, False]))
     reward, terms = LowReward(cfg)(result, final_return_failure_count=1, final_return_distance_sum_m=1800)
-    assert np.isclose(terms['collected_packets'], 1250)
-    assert terms['system_max_post_service'] == -300
+    assert np.isclose(terms['collected_packets'], 7500 / 180)
+    assert terms['system_max_post_service'] == -2.25
     assert terms['oob'] == -5
     assert terms['return_failure'] + terms['return_distance'] == -1000
-    assert np.isclose(reward, 1250 - 300 - 5 - 1000)
+    assert np.isclose(reward, 7500 / 180 - 2.25 - 5 - 1000)
     result.system_max_post_service = 1e12
-    assert LowReward(cfg)(result)[1]['system_max_post_service'] == -1e11
+    assert LowReward(cfg)(result)[1]['system_max_post_service'] == -(1e12 / 2000) ** 2
     cfg['reward'].pop('low_collection_mode')
     cfg['reward'].pop('low_collection_weight')
     cfg['reward'].pop('low_collection_scale_packets')
@@ -163,8 +177,18 @@ def test_lower_reward_units_and_legacy_compatibility():
     assert terms['system_max_post_service'] == -3000
 
 
+def test_default_entropy_stays_constant():
+    env, cfg = trainer_config()
+    trainer = JointTrainer(env, cfg)
+    for frame in (0, 10000, 55000, 100000, 400000):
+        assert trainer.mappo.entropy_coefficient(frame) == .05
+
+
 def test_entropy_schedule_is_frame_based_and_resume_preserves_it():
     env, cfg = trainer_config()
+    # Explicit legacy schedule remains supported for saved checkpoints.
+    cfg['mappo'].update(entropy_end_coef=.005, entropy_decay_start_frame=10000,
+                        entropy_decay_end_frame=100000)
     trainer = JointTrainer(env, cfg)
     for frame, expected in [(0, .05), (10000, .05), (55000, .0275), (100000, .005), (400000, .005)]:
         assert np.isclose(trainer.mappo.entropy_coefficient(frame), expected)

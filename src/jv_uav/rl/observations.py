@@ -61,15 +61,26 @@ def lower_arrays(obs, rms, world_size, fleet_size=None):
     return rms.normalize(obs["sensor_last_visit_sec"]), features
 
 
-def upper_observation(scene, energy):
-    """Shared actor: all SOCs, own one-hot ID/status, occupancy and return time."""
+def upper_observation(scene, energy, mode="arrival_soc"):
+    """Arrival SOC and occupancy; legacy checkpoints retain current SOC/time."""
+    if mode not in ("arrival_soc", "current_soc_return_time"):
+        raise ValueError("unknown upper observation mode")
     n = scene.num_uavs
     status = np.eye(4, dtype=np.float32)[scene.uav_status]
     occupancy = np.asarray([
         len(scene.charging_ids()) / max(int(scene.cfg["zones"]["charging_slots"]), 1),
         len(scene.waiting_ids()) / max(int(scene.cfg["zones"]["waiting_slots"]), 1),
     ], dtype=np.float32)
-    times = energy.return_trip(scene.uav_pos, scene.airship_pos).time_sec.copy()
+    trip = energy.return_trip(scene.uav_pos, scene.airship_pos)
+    if mode == "arrival_soc":
+        cost = trip.energy_frac.copy()
+        cost[np.isin(scene.uav_status, [1, 2])] = 0.0
+        soc = scene.uav_battery - cost  # Preserve negative arrival energy margins.
+        actor = np.concatenate([np.broadcast_to(soc, (n, n)), np.eye(n), status,
+                                np.broadcast_to(occupancy, (n, 2))], axis=1).astype(np.float32)
+        critic = np.concatenate([np.column_stack([soc, status]).ravel(), occupancy]).astype(np.float32)
+        return {"actor": actor, "critic": critic}
+    times = trip.time_sec.copy()
     times[np.isin(scene.uav_status, [1, 2])] = 0.0
     times /= scene.low_step_sec * scene.low_steps_per_frame
     actor = np.concatenate([

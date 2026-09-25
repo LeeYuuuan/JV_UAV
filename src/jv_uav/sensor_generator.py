@@ -69,6 +69,9 @@ def generate_radial_sensor_distribution(cfg: Mapping[str, Any]) -> dict[str, np.
     spread = float(sensors["local_scatter_radius_m"])
     margin = float(sensors["cluster_center_margin_m"])
     separation = float(sensors["min_cluster_center_distance_m"])
+    outer_margin = float(sensors.get("outer_sensor_margin_m", 0.0))
+    if not np.isfinite(outer_margin) or not 0 <= outer_margin < size / 2:
+        raise ValueError("outer_sensor_margin_m must be finite and inside half the map size")
     if not (0 < inner_count < count and 0 < inner_clusters < clusters):
         raise ValueError("radial maps require nonempty inner/outer sensor and cluster groups")
     if not (0 < radius < outer_min < outer_max and 0 < std <= spread and 0 <= ratio <= 1):
@@ -89,6 +92,7 @@ def generate_radial_sensor_distribution(cfg: Mapping[str, Any]) -> dict[str, np.
     regions = [(inner_count, inner_clusters, (0.0, radius), sensors["inner_center_radius_range_m"]),
                (count - inner_count, clusters - inner_clusters, (outer_min, outer_max), sensors["outer_center_radius_range_m"])]
     for region_index, (total, n, (lo, hi), center_bounds) in enumerate(regions):
+        point_margin = outer_margin if region_index == 1 else 0.0
         cmin, cmax = map(float, center_bounds)
         if total < n or not (lo <= cmin < cmax <= hi):
             raise ValueError("cluster center bounds must lie inside their radial region")
@@ -122,7 +126,7 @@ def generate_radial_sensor_distribution(cfg: Mapping[str, Any]) -> dict[str, np.
                     # Validate the actual float32 values that Scene will receive.
                     p = p.astype(np.float32)
                     distance = np.linalg.norm(p.astype(float) - airship)
-                    if (np.all((p >= 0) & (p <= size)) and lo <= distance <= hi
+                    if (np.all((p >= point_margin) & (p <= size - point_margin)) and lo <= distance <= hi
                             and np.linalg.norm(p - candidate) <= spread):
                         accepted.append(p)
                 if len(accepted) != amount:
@@ -138,7 +142,7 @@ def generate_radial_sensor_distribution(cfg: Mapping[str, Any]) -> dict[str, np.
                 break
             p = rng.uniform(0, size, 2).astype(np.float32)
             distance = np.linalg.norm(p.astype(float) - airship)
-            if lo <= distance <= hi:
+            if lo <= distance <= hi and np.all((p >= point_margin) & (p <= size - point_margin)):
                 accepted.append(p)
         if len(accepted) != free_count:
             raise ValueError("cannot sample independent radial scatter")
@@ -158,6 +162,8 @@ def generate_radial_sensor_distribution(cfg: Mapping[str, Any]) -> dict[str, np.
         if point.shape != (2,) or not np.isfinite(point).all() or not np.all((point >= 0) & (point <= size)):
             raise ValueError("position override must be a finite point inside the map")
         was_inner = np.linalg.norm(positions[index].astype(float) - airship) <= radius
+        if not was_inner and not np.all((point >= outer_margin) & (point <= size - outer_margin)):
+            raise ValueError("outer position override violates outer_sensor_margin_m")
         distance = np.linalg.norm(point.astype(float) - airship)
         if not (distance <= radius if was_inner else outer_min <= distance <= outer_max):
             raise ValueError("position override must preserve the sensor's radial region")

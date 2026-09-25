@@ -4,6 +4,23 @@ import copy
 import numpy as np
 
 
+def charging_record(info):
+    """Distinguish a request, a reserved slot, and positive settled charge."""
+    plan = info['frame_plan']
+    added = np.asarray(info['settlement'].get('charge_added_frac', np.zeros(len(plan.requested_charge))))
+    ids = lambda mask: np.flatnonzero(mask).tolist()
+    groups = {
+        'requested': ids(plan.requested_charge),
+        'assigned_charging': ids(plan.assigned_status == 2),
+        'assigned_waiting': ids(plan.assigned_status == 1),
+        'rejected': ids(plan.requested_charge & (plan.assigned_status == 0)),
+        'actually_charged': ids(added > 0),
+    }
+    return {'counts': {k: len(v) for k, v in groups.items()}, 'uav_ids': groups,
+            'charge_added_soc_by_uav': added.tolist(),
+            'settled': bool(info['settlement'])}
+
+
 class EpisodeDiagnostics:
     def __init__(self, gamma):
         self.gamma = float(gamma)
@@ -17,6 +34,13 @@ class EpisodeDiagnostics:
         self.sensor_ids = set()
         self.outer_sensor_ids = set()
         self.probes = []
+        self.charging_counts = {}
+        self.charging_frames = 0
+
+    def record_charging(self, record):
+        self.charging_frames += 1
+        for key, value in record['counts'].items():
+            self.charging_counts[key] = self.charging_counts.get(key, 0) + value
 
     def record(self, result, action, center, sensor_pos, *, warmup=False):
         self.return_sum += float(result.reward)
@@ -55,6 +79,7 @@ class EpisodeDiagnostics:
                          sampled_observations=len(self.probes))
         complete = self.steps == episode_steps
         return dict(lower_diagnostics_complete=complete, lower_recorded_steps=self.steps,
+            charging_counts=dict(self.charging_counts), charging_recorded_frames=self.charging_frames,
             lower_return=self.return_sum if complete else None,
             lower_mean_reward=self.return_sum / max(self.steps, 1) if complete else None,
             lower_discounted_return=self.discounted_return if complete else None,

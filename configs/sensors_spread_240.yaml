@@ -1,54 +1,58 @@
+# 240 sensors: 216 inside; outside has 2 clusters and 3 scatter points, 300m from edges.
+# Full environment config. Per-sensor arrival rate remains 0.5 pkt/s.
 seeds:
   map_seed: 42
   dynamics_seed: 43
-
 world:
   size_m: 4000.0
-  airship_xy_m: [2000.0, 2000.0]
-
+  airship_xy_m:
+  - 2000.0
+  - 2000.0
 sensors:
-  count: 150
+  count: 240
   distribution: radial_clusters
   scatter_mode: independent
-  inner_scatter_count: 6
+  inner_scatter_count: 132
   outer_scatter_count: 3
-  position_overrides_by_seed:
-    42:
-      42:
-      - 3300.0
-      - 3600.0
-      106:
-      - 3700.0
-      - 3200.0
+  outer_sensor_margin_m: 300.0
   partition_radius_m: 1800.0
-  inner_count: 100
-  inner_cluster_count: 5
-  inner_center_radius_range_m: [650.0, 1450.0]
-  outer_center_radius_range_m: [2100.0, 2250.0]
-  outer_radius_range_m: [2000.0, 2400.0]
-  local_scatter_radius_m: 300.0
+  inner_count: 216
+  inner_cluster_count: 3
+  inner_center_radius_range_m:
+  - 650.0
+  - 1400.0
+  outer_center_radius_range_m:
+  - 1900.0
+  - 2050.0
+  outer_radius_range_m:
+  - 1850.0
+  - 2200.0
+  local_scatter_radius_m: 550.0
   arrival_rate_per_sec: 0.5
   cold_start_sec: 60.0
-  cluster_count: 7
-  cluster_ratio: 0.90
-  cluster_std_m: 100.0
+  cluster_count: 5
+  cluster_ratio: 0.4375
+  cluster_std_m: 220.0
   cluster_center_margin_m: 300.0
   min_cluster_center_distance_m: 400.0
-
 uavs:
   count: 6
   initial_battery_frac: 1.0
-  initial_serving_ids: [0, 1, 2, 3, 4, 5]
+  initial_serving_ids:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
   speed_mps: 6.0
   max_move_time_sec: 30.0
-  coverage_radius_m: 173.2  # 100 m altitude * tan(60 deg from vertical)
+  coverage_radius_m: 173.2
   return_reserve_frac: 0.0
-
 time:
   low_step_sec: 60.0
   low_steps_per_frame: 10
   episode_upper_frames: 100
-
 energy:
   battery_capacity_wh: 125.0
   horizontal_power_w: 257.0
@@ -57,21 +61,18 @@ energy:
   charging_power_w: 500.0
   horizontal_speed_mps: 6.0
   climb_speed_mps: 5.0
-  service_to_airship_height_m: 50.0  # Airship 150 m AGL minus service altitude 100 m AGL
-
+  service_to_airship_height_m: 50.0
 zones:
   charging_slots: 2
   waiting_slots: 2
   release_battery_frac: 0.999
   allocation_rule: lowest_arrival_battery
-
 service:
   mode: full_clear_nearest
-
 reward:
   low_collection_mode: total_packets
   low_collection_weight: 1.0
-  low_collection_scale_packets: 30.0  # Actual collected packets / (6 UAVs * 30)
+  low_collection_scale_packets: 30.0
   low_backlog_scale_packets: 2000.0
   low_backlog_mode: quadratic
   low_system_max_after_weight: 1.0
@@ -80,14 +81,13 @@ reward:
   low_return_distance_weight: 500.0
   low_return_distance_scale_m: 1800.0
   upper_serving_weight: 5.0
-  upper_frame_max_backlog_weight: 1.0  # Linear cost = weight * backlog / scale
+  upper_frame_max_backlog_weight: 1.0
   upper_backlog_mode: linear
-  upper_backlog_scale_packets: 2000.0  # Linear, uncapped: 30000 packets cost 15
+  upper_backlog_scale_packets: 2000.0
   upper_charging_weight: 0.0
   upper_waiting_weight: 0.0
-  upper_episode_failure_weight: 0.0  # Legacy episode-level cost, disabled
-  upper_lower_return_failure_weight: 15.0  # Shared responsibility, per failed UAV
+  upper_episode_failure_weight: 0.0
+  upper_lower_return_failure_weight: 15.0
   upper_dead_weight: 20.0
-
 metrics:
   coverage_grid_size: 64
