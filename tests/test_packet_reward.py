@@ -8,6 +8,7 @@ from jv_uav.low_env import LowReward
 
 def test_packet_collection_not_double_counted_by_overlapping_uavs():
     cfg,*_=build_env()
+    cfg['reward']['low_collection_mode']='total_packets'  # Legacy reward remains supported.
     service=FullClearNearestService(6,173.2)
     sensors=np.array([[0.,0.],[200.,0.]])
     positions=np.full((6,2),4000.);positions[:2]=[100,0]
@@ -25,6 +26,7 @@ def test_packet_collection_not_double_counted_by_overlapping_uavs():
 
 def test_packet_reward_removes_incentive_to_split_the_same_collection():
     cfg,*_=build_env()
+    cfg['reward']['low_collection_mode']='total_packets'
     service=FullClearNearestService(6,173.2);reward=LowReward(cfg)
     sensors=np.array([[0.,0.],[200.,0.],[3000.,3000.]])
     totals=[]

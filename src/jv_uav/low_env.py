@@ -19,8 +19,11 @@ class LowReward:
         uavs = section(cfg, "uavs")
         self.covered_weight = float(reward.get("low_collection_weight", reward.get("low_covered_max_sum_weight", 1.0))) / float(uavs["count"])
         self.collection_mode = reward.get("low_collection_mode", "owned_max")
-        if self.collection_mode not in {"owned_max", "total_packets"}:
-            raise ValueError("low_collection_mode must be owned_max or total_packets")
+        if self.collection_mode not in {"owned_max", "total_packets", "covered_pnorm"}:
+            raise ValueError("low_collection_mode must be owned_max, total_packets or covered_pnorm")
+        self.collection_p = float(reward.get("low_collection_p", 4.0))
+        if not np.isfinite(self.collection_p) or self.collection_p < 1:
+            raise ValueError("low_collection_p must be finite and at least 1")
         self.system_weight = float(reward["low_system_max_after_weight"])
         self.backlog_scale = float(reward.get("low_backlog_scale_packets", 1.0))
         # Missing field preserves the shared scale used by older checkpoints.
@@ -48,7 +51,15 @@ class LowReward:
         final_return_distance_sum_m: float = 0.0,
     ) -> tuple[float, dict[str, float]]:
 
-        if self.collection_mode == "total_packets":
+        if self.collection_mode == "covered_pnorm":
+            # Full-clear service: each collected sensor contributes its pre-service
+            # backlog once, irrespective of the number of covering UAVs.
+            packets = np.asarray(result.collected_per_sensor, dtype=np.float64)
+            maximum = float(packets.max(initial=0.0))
+            volume = (maximum * float(np.sum((packets / maximum) ** self.collection_p))
+                      ** (1.0 / self.collection_p)) if maximum > 0 else 0.0
+            collection_key = "covered_pnorm"
+        elif self.collection_mode == "total_packets":
             # Each sensor has one service owner; overlapping UAVs cannot double count.
             volume = float(result.collected_per_sensor.sum())
             collection_key = "collected_packets"

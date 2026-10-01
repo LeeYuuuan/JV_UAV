@@ -310,9 +310,11 @@ class JointTrainer:
         if (saved_ppo.get("entropy_coef") != 0.05
                 or saved_ppo.get("entropy_end_coef", saved_ppo.get("entropy_coef")) != 0.05):
             warnings.warn("This checkpoint preserves its saved MAPPO entropy settings. Start a fresh run to use constant entropy_coef=0.05.", UserWarning)
-        if (saved_reward.get("upper_backlog_scale_packets") != 2000.0
+        if (saved_reward.get("upper_reward_mode", "serving_backlog") != "lower_data_mean"
+                or saved_reward.get("upper_backlog_scale_packets") != 2000.0
                 or saved_reward.get("upper_backlog_cap") is not None
-                or saved_reward.get("low_collection_mode") != "total_packets"
+                or saved_reward.get("low_collection_mode") != "covered_pnorm"
+                or saved_reward.get("low_collection_p", 4.0) != 4.0
                 or saved_reward.get("low_collection_scale_packets") != 30.0
                 or saved_reward.get("low_backlog_scale_packets") != 2000.0
                 or saved_reward.get("low_backlog_mode") != "quadratic"

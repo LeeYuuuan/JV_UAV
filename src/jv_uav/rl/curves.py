@@ -109,7 +109,7 @@ class TrainingCurves:
             ('lower_discounted_return', 'Lower discounted episode return', 'Sum gamma^t * reward'),
             ('lower_collected_packets', 'Actual packets collected', 'Packets / episode'),
         ]
-        labels = dict(collected_packets='Collected packets (+)', covered_max_sum='Legacy owned maxima (+)', system_max_post_service='Backlog (-)',
+        labels = dict(covered_pnorm='Covered union p-norm (+)', collected_packets='Collected packets (+)', covered_max_sum='Legacy owned maxima (+)', system_max_post_service='Backlog (-)',
                       oob='Boundary (-)', return_failure='Return failure (-)', return_distance='Return distance (-)')
         colors = ['#3b9672', '#76a18b', '#9063bd', '#e19b26', '#d45e6b', '#327aa0']
         for ax, (key, title, ylabel) in zip(axes.flat, panels):

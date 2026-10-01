@@ -1,5 +1,13 @@
 # Experiment revisions
 
+## 2026-10-01: lower covered-union p-norm
+
+- Both map configs replace the lower packet-sum reward with the p=4 norm of uniquely collected sensors' pre-service backlogs, divided by 180 for six UAVs. Full-clear nearest-owner collection ensures overlap is counted once. Empty coverage gives zero.
+- Keep `-(Bmax/2000)^2`, boundary and final-return penalties unchanged. Upper reward, observations and training settings are unchanged.
+- Log the new component as `covered_pnorm`; actual packet throughput remains separately logged. Old total-packet and owned-max checkpoint modes remain supported.
+- This norm is not additive across time: splitting a batch across steps can increase the sum of collection bonuses. The retained backlog cost and discount also affect this tradeoff; do not infer policy invariance or minimax optimality from this reward.
+- Suggested run note: `lower-union-p4-div180-backlog2000quadratic`; start a fresh run to use the new reward without mixing old replay rewards.
+
 ## 2026-09-25: lower reward emphasizing delayed backlog
 
 - Both default and spread-240 environments now use collected packets / 180 and `-(post-service max backlog / 2000)^2`, uncapped.
@@ -41,3 +49,11 @@
 - Counts represent UAV-frame occurrences, not unique UAVs or distinct request sessions. Continuing a request counts again on the next frame. Assigned charging is not proof of receiving energy.
 - Episode diagnostics and evaluation summaries contain `charging_counts`; evaluation policy traces include the per-frame details. `charging_recorded_frames` shows how many frames were observed; old checkpoint resumes cannot reconstruct missing earlier counters.
 - Scheduling remains lowest predicted arrival SOC within priority groups, not FIFO. Upper observations and sensor distribution are unchanged.
+
+
+## 2026-10-01: upper reward aligned with lower data terms
+
+- New configs use `upper_reward_mode: lower_data_mean`: mean over executed lower steps of covered-union p=4 norm /180 minus (post-service max backlog /2000)^2. This replaces serving-count and linear backlog rewards.
+- Normal frames average 10 steps; death-shortened frames average actual executed K. No clipping or time gate. Lower OOB and distance penalties are excluded. Upper death costs remain 20 and shared final-return costs 15 per UAV, without double counting; C/W costs remain zero.
+- Reward logs expose `frame_mean_lower_collection` and `frame_mean_lower_backlog`; existing resolved configs and provenance capture the mode. Changes to lower data weights intentionally also affect upper data rewards.
+- Upper inputs remain arrival SOC, ID, own status and C/W occupancy. Old checkpoint configs without this reward mode retain serving/backlog reward and warn on resume. Start a fresh run to use this revision.

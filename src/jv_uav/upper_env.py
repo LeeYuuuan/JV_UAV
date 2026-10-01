@@ -23,6 +23,9 @@ class UpperReward:
 
     def __init__(self, cfg: Mapping[str, Any]) -> None:
         reward = section(cfg, "reward")
+        self.mode = reward.get("upper_reward_mode", "serving_backlog")
+        if self.mode not in {"serving_backlog", "lower_data_mean"}:
+            raise ValueError("unknown upper_reward_mode")
         self.serving_weight = float(reward["upper_serving_weight"])
         self.backlog_weight = float(reward["upper_frame_max_backlog_weight"])
         self.dead_weight = float(reward["upper_dead_weight"])
@@ -60,6 +63,7 @@ class UpperReward:
         self, serving_count: int, frame_max_mean: float, dead_count: int,
         *, episode_failed: bool = False, charging_count: int = 0, waiting_count: int = 0,
         lower_return_failure_count: int = 0,
+        lower_reward_terms: list[Mapping[str, float]] | None = None,
     ) -> tuple[float, dict[str, float]]:
         backlog_cost = frame_max_mean / self.backlog_scale
         if self.backlog_mode == "bounded":
@@ -77,6 +81,24 @@ class UpperReward:
             # Retained for legacy checkpoints; new runs set this weight to zero.
             "episode_failure": -self.episode_failure_weight if episode_failed and dead_count == 0 else 0.0,
         }
+        if self.mode == "lower_data_mean":
+            if not lower_reward_terms:
+                raise ValueError("lower_data_mean requires executed lower-step reward terms")
+            # Average the already weighted data terms, never lower failure/OOB costs.
+            # This is mean(Bmax**2), not mean(Bmax)**2. Partial frames use actual K.
+            collection = []
+            for step_terms in lower_reward_terms:
+                keys = [key for key in ("covered_pnorm", "collected_packets", "covered_max_sum")
+                        if key in step_terms]
+                if len(keys) != 1:
+                    raise ValueError("each lower step must have exactly one collection term")
+                collection.append(step_terms[keys[0]])
+            terms.pop("serving")
+            terms.pop("frame_mean_system_max_post")
+            terms["frame_mean_lower_collection"] = float(np.mean(collection))
+            terms["frame_mean_lower_backlog"] = float(np.mean([
+                step_terms["system_max_post_service"] for step_terms in lower_reward_terms
+            ]))
         return float(sum(terms.values())), terms
 
 
@@ -138,6 +160,7 @@ class UpperEnv:
             charging_count=int(np.sum(plan.assigned_status == int(UAVStatus.CHARGING))),
             waiting_count=int(np.sum(plan.assigned_status == int(UAVStatus.WAITING))),
             lower_return_failure_count=len(lower_failure_ids),
+            lower_reward_terms=[step.reward_terms for step in low_frame.steps],
         )
         self.trace.frames.append(self._make_frame_record(plan, low_frame))
 

@@ -14,6 +14,7 @@ from jv_uav.rl.trainer import JointTrainer
 
 def test_linear_backlog_scale_has_no_cap():
     cfg, *_ = build_env()
+    cfg["reward"].pop("upper_reward_mode")  # Legacy saved configs keep their formula.
     reward = UpperReward(cfg)
     for backlog, cost in [(0, 0), (300, -0.15), (3000, -1.5), (15000, -7.5), (30000, -15), (60000, -30)]:
         value, terms = reward(2, backlog, 0, charging_count=2, waiting_count=2)
@@ -56,6 +57,7 @@ def test_upper_deaths_and_shared_return_failures_have_separate_costs():
 def test_occupancy_cost_uses_assigned_roles_not_requests_or_released_roles():
     _, _, _, _, env = build_env()
     # Nonzero costs remain supported for old checkpoints and custom experiments.
+    env.upper_reward.mode = "serving_backlog"
     env.upper_reward.charging_weight = 1.0
     env.upper_reward.waiting_weight = 0.5
     _, _, _, _, info = env.step(np.ones(6, dtype=np.int8))
@@ -69,7 +71,8 @@ def test_default_charging_and_waiting_have_no_direct_penalty():
     _, reward, _, _, info = env.step(np.ones(6, dtype=np.int8))
     terms = info['reward_terms']
     assert terms['charging'] == 0 and terms['waiting'] == 0
-    assert terms['serving'] == 10
+    assert 'serving' not in terms
+    assert 'frame_mean_lower_collection' in terms
     assert np.isclose(reward, sum(terms.values()))
 
 
@@ -154,6 +157,7 @@ def test_lower_reward_units_and_legacy_compatibility():
     from types import SimpleNamespace
     from jv_uav.low_env import LowReward
     cfg, *_ = build_env()
+    cfg['reward']['low_collection_mode'] = 'total_packets'
     result = SimpleNamespace(per_uav_owned_max_pre_service=np.array([3000., 3000., 0, 0, 0, 0]),
                              collected_per_sensor=np.array([3000.,3000.,1500.]),
                              system_max_post_service=3000., oob_mask=np.array([True, False]))

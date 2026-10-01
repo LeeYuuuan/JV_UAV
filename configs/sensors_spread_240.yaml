@@ -70,7 +70,9 @@ zones:
 service:
   mode: full_clear_nearest
 reward:
-  low_collection_mode: total_packets
+  upper_reward_mode: lower_data_mean  # Mean of executed lower data terms; separate upper death costs
+  low_collection_mode: covered_pnorm
+  low_collection_p: 4.0
   low_collection_weight: 1.0
   low_collection_scale_packets: 30.0
   low_backlog_scale_packets: 2000.0
