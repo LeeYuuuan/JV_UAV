@@ -36,6 +36,22 @@ class EpisodeDiagnostics:
         self.probes = []
         self.charging_counts = {}
         self.charging_frames = 0
+        self.request_probability_sum = None
+        self.request_probability_frames = 0
+
+    def record_request_probabilities(self, probabilities):
+        if self.request_probability_sum is None:
+            self.request_probability_sum = np.zeros_like(probabilities, dtype=np.float64)
+        self.request_probability_sum += probabilities
+        self.request_probability_frames += 1
+
+    def request_probability_summary(self, expected_frames):
+        result = {"request_probability_frames": self.request_probability_frames}
+        if self.request_probability_frames and self.request_probability_frames == expected_frames:
+            means = self.request_probability_sum / expected_frames
+            result.update(request_probability_mean=float(means.mean()),
+                          request_probability_mean_by_uav=means.tolist())
+        return result
 
     def record_charging(self, record):
         self.charging_frames += 1

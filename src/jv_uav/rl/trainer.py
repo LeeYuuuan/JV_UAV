@@ -148,10 +148,11 @@ class JointTrainer:
             self.diagnostics = EpisodeDiagnostics(self.cfg["sac"]["gamma"])
             self.episode_over = False
         observation = upper_observation(self.env.scene, self.env.energy_model, self.mappo.observation_mode)
-        action, logp, value = self.mappo.act(observation)
+        action, logp, value, probabilities = self.mappo.act(observation, include_probabilities=True)
         _, reward, terminated, truncated, info = self.env.step(action)
         charging = charging_record(info)
         self.diagnostics.record_charging(charging)
+        self.diagnostics.record_request_probabilities(probabilities)
         self.upper_steps += 1
         self.episode_return += reward
         done = terminated or truncated
@@ -178,6 +179,7 @@ class JointTrainer:
                 "frames": len(self.env.trace.frames),
             }
             episode_metrics.update(self.diagnostics.summary(self.env.scene.low_step_total))
+            episode_metrics.update(self.diagnostics.request_probability_summary(len(self.env.trace.frames)))
             episode_metrics["warmup_exploration_counts_total"] = dict(self.exploration.counts)
         return {
             "upper_steps": self.upper_steps, "low_steps": self.low_steps,
@@ -190,8 +192,10 @@ class JointTrainer:
             "pending_transition": self.pending is not None,
             "dead_ids": info["dead_ids_end"].tolist(),
             "system_max_backlog": float(self.env.scene.sensor_backlog.max()),
+            "serving_count": info["serving_count_during_frame"],
             "frame_low_steps": len(info["low_frame"].steps),
             "termination_reason": self.env.trace.frames[-1].termination_reason,
+            "request_probabilities": probabilities.tolist(),
             "charge_requests": int(info["frame_plan"].requested_charge.sum()),
             "charging_assignments": int(np.sum(info["frame_plan"].assigned_status == 2)),
             "waiting_assignments": int(np.sum(info["frame_plan"].assigned_status == 1)),
@@ -216,8 +220,7 @@ class JointTrainer:
         charge_added = np.zeros(env.scene.num_uavs, dtype=np.float64)
         while True:
             obs = upper_observation(env.scene, env.energy_model, self.mappo.observation_mode)
-            probabilities = self.mappo.request_probabilities(obs)
-            action, _, _ = self.mappo.act(obs, deterministic=True)
+            action, _, _, probabilities = self.mappo.act(obs, deterministic=True, include_probabilities=True)
             _, reward, terminated, truncated, info = env.step(action)
             plan = info["frame_plan"]
             added = info["settlement"].get("charge_added_frac", np.zeros(env.scene.num_uavs))
@@ -304,12 +307,8 @@ class JointTrainer:
         if "switch_after_sac_updates" in state["train_cfg"]:
             warnings.warn("The retired SAC frequency switch is ignored; per-transition updates continue throughout training.", UserWarning)
         saved_reward = state["env_cfg"]["reward"]
-        saved_ppo = state["train_cfg"]["mappo"]
         if trainer.mappo.observation_mode != "arrival_soc":
             warnings.warn("This checkpoint retains the legacy upper current-SOC/return-time inputs. Start a fresh run for arrival-SOC inputs.", UserWarning)
-        if (saved_ppo.get("entropy_coef") != 0.05
-                or saved_ppo.get("entropy_end_coef", saved_ppo.get("entropy_coef")) != 0.05):
-            warnings.warn("This checkpoint preserves its saved MAPPO entropy settings. Start a fresh run to use constant entropy_coef=0.05.", UserWarning)
         if (saved_reward.get("upper_reward_mode", "serving_backlog") != "lower_data_mean"
                 or saved_reward.get("upper_backlog_scale_packets") != 2000.0
                 or saved_reward.get("upper_backlog_cap") is not None

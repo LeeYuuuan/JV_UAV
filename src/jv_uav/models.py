@@ -118,7 +118,8 @@ class LowestArrivalBatteryScheduler:
         retained_charging = np.flatnonzero(
             requested & (scene.uav_status == int(UAVStatus.CHARGING))
         )
-        retained_charging = low_battery_order(retained_charging)[: self.charging_slots]
+        if np.count_nonzero(scene.uav_status == int(UAVStatus.CHARGING)) > self.charging_slots:
+            raise ValueError("current charging occupancy exceeds charging capacity")
         remaining = requested.copy()
         remaining[retained_charging] = False
 

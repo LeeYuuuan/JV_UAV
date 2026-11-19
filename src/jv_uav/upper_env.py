@@ -24,8 +24,11 @@ class UpperReward:
     def __init__(self, cfg: Mapping[str, Any]) -> None:
         reward = section(cfg, "reward")
         self.mode = reward.get("upper_reward_mode", "serving_backlog")
-        if self.mode not in {"serving_backlog", "lower_data_mean"}:
+        if self.mode not in {"serving_backlog", "lower_data_mean", "paper1_serving_backlog"}:
             raise ValueError("unknown upper_reward_mode")
+        self.divisor = float(reward.get("upper_reward_divisor", 1.0))
+        if not np.isfinite(self.divisor) or self.divisor <= 0:
+            raise ValueError("upper_reward_divisor must be positive and finite")
         self.serving_weight = float(reward["upper_serving_weight"])
         self.backlog_weight = float(reward["upper_frame_max_backlog_weight"])
         self.dead_weight = float(reward["upper_dead_weight"])
@@ -99,6 +102,9 @@ class UpperReward:
             terms["frame_mean_lower_backlog"] = float(np.mean([
                 step_terms["system_max_post_service"] for step_terms in lower_reward_terms
             ]))
+        if self.mode == "paper1_serving_backlog":
+            terms["frame_mean_system_max_pre"] = terms.pop("frame_mean_system_max_post")
+        terms = {key: value / self.divisor for key, value in terms.items()}
         return float(sum(terms.values())), terms
 
 
@@ -154,14 +160,28 @@ class UpperEnv:
             for uav_id in step.return_unsafe_ids
         }
         upper_dead_count = sum(int(uav_id) not in lower_failure_ids for uav_id in dead_ids)
-        reward, reward_terms = self.upper_reward(
-            serving_count, low_frame.mean_system_max_post_service, upper_dead_count,
-            episode_failed=bool(low_frame.terminated or dead_ids.size),
-            charging_count=int(np.sum(plan.assigned_status == int(UAVStatus.CHARGING))),
-            waiting_count=int(np.sum(plan.assigned_status == int(UAVStatus.WAITING))),
-            lower_return_failure_count=len(lower_failure_ids),
-            lower_reward_terms=[step.reward_terms for step in low_frame.steps],
-        )
+        charging_count = int(np.sum(plan.assigned_status == int(UAVStatus.CHARGING)))
+        waiting_count = int(np.sum(plan.assigned_status == int(UAVStatus.WAITING)))
+        if self.upper_reward.mode == "paper1_serving_backlog":
+            # Use this frame's roles, excluding deaths. Settlement can already
+            # release or promote UAVs for the next frame.
+            survived = self.scene.uav_status != int(UAVStatus.DEAD)
+            counts = [int(np.sum(survived & (plan.assigned_status == int(status))))
+                      for status in (UAVStatus.SERVING, UAVStatus.CHARGING, UAVStatus.WAITING)]
+            pre_service_maxima = [step.system_max_pre_service for step in low_frame.steps]
+            frame_max_pre = float(np.mean(pre_service_maxima)) if pre_service_maxima else 2400.0
+            reward, reward_terms = self.upper_reward(
+                counts[0], frame_max_pre, int(dead_ids.size),
+                charging_count=counts[1], waiting_count=counts[2],
+            )
+        else:
+            reward, reward_terms = self.upper_reward(
+                serving_count, low_frame.mean_system_max_post_service, upper_dead_count,
+                episode_failed=bool(low_frame.terminated or dead_ids.size),
+                charging_count=charging_count, waiting_count=waiting_count,
+                lower_return_failure_count=len(lower_failure_ids),
+                lower_reward_terms=[step.reward_terms for step in low_frame.steps],
+            )
         self.trace.frames.append(self._make_frame_record(plan, low_frame))
 
         terminated = bool(low_frame.terminated or dead_ids.size)

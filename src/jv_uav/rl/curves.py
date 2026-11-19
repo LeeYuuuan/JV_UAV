@@ -92,6 +92,14 @@ class TrainingCurves:
         history_tmp.replace(self.output / 'training_curves.json')
         fig.clear()
         self.save_lower(rows)
+        probability_rows = [row for row in rows if "request_probability_mean_by_uav" in row]
+        if probability_rows:
+            save_request_probability_plot(
+                self.output / "upper_request_probability.png",
+                [row["episode"] for row in probability_rows],
+                [row["request_probability_mean_by_uav"] for row in probability_rows],
+                xlabel="Completed training episode", smooth=True,
+            )
 
 
     def save_lower(self, rows):
@@ -145,3 +153,41 @@ class TrainingCurves:
         fig.savefig(temp)
         temp.replace(self.output/'lower_training_curves.png')
         fig.clear()
+
+def save_request_probability_plot(path, indices, probabilities, *, xlabel, smooth=False):
+    """Plot the mean request probability over executed frames for each UAV."""
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.ticker import PercentFormatter, MaxNLocator
+
+    indices = np.asarray(indices)
+    probabilities = np.asarray(probabilities, dtype=float)
+    fleet_mean = probabilities.mean(axis=1)
+    fig = Figure(figsize=(11, 6), dpi=140, layout="constrained")
+    FigureCanvasAgg(fig)
+    mean_ax, fleet_ax = fig.subplots(2, 1, sharex=True)
+    mean_ax.plot(indices, fleet_mean, color="#167d9a", marker="." if not smooth else None,
+                 alpha=0.45 if smooth else 1, label="Fleet mean")
+    if smooth and len(indices) >= 10:
+        rolling = np.convolve(fleet_mean, np.ones(10) / 10, mode="valid")
+        rolling[(indices[9:] - indices[:-9]) != 9] = np.nan
+        mean_ax.plot(indices[9:], rolling, color="#167d9a", label="10-episode mean")
+    for uav_id, values in enumerate(probabilities.T):
+        fleet_ax.plot(indices, values, lw=1, marker="." if not smooth else None,
+                      label=f"U{uav_id}")
+    mean_ax.set_title("Fleet average")
+    fleet_ax.set_title("Average by UAV")
+    for ax in (mean_ax, fleet_ax):
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("P(request charging)")
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.grid(alpha=0.2)
+        ax.legend(frameon=False, ncols=3)
+    fleet_ax.set_xlabel(xlabel)
+    fig.suptitle("Upper policy | charging request probability")
+    path = Path(path)
+    temporary = path.with_suffix(".tmp.png")
+    fig.savefig(temporary)
+    temporary.replace(path)
+    fig.clear()

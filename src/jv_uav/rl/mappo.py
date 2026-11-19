@@ -9,15 +9,19 @@ from .sac import backward_step
 
 
 def gae(rewards, values, dones, last_value, gamma, lam):
-    advantages = np.zeros(len(rewards), np.float32)
+    if torch.is_tensor(rewards):
+        advantages = torch.zeros_like(rewards)
+    else:
+        advantages = np.zeros(len(rewards), np.float32)
     accumulator = 0.0
     for t in reversed(range(len(rewards))):
         next_value = last_value if t == len(rewards) - 1 else values[t + 1]
-        live = 1.0 - float(dones[t])
-        delta = rewards[t] + gamma * live * next_value - values[t]
+        live = 1.0 - (dones[t] if torch.is_tensor(dones) else float(dones[t]))
+        delta = rewards[t] + gamma * next_value * live - values[t]
         accumulator = delta + gamma * lam * live * accumulator
         advantages[t] = accumulator
-    return advantages, advantages + np.asarray(values, np.float32)
+    targets = values if torch.is_tensor(values) else np.asarray(values, np.float32)
+    return advantages, advantages + targets
 
 
 class MAPPO:
@@ -27,25 +31,66 @@ class MAPPO:
         if self.observation_mode not in ("arrival_soc", "current_soc_return_time"):
             raise ValueError("unknown upper observation mode")
         arrival = self.observation_mode == "arrival_soc"
-        self.actor = mlp(2 * fleet + (6 if arrival else 7), cfg["hidden"], 1).to(device)
-        self.critic = mlp((5 if arrival else 6) * fleet + 2, cfg["hidden"], 1).to(device)
+        architecture = cfg.get("actor_architecture", "default")
+        self.paper1_ppo = cfg.get("paper1_ppo", False)
+        if self.paper1_ppo and architecture != "paper1_notebook":
+            raise ValueError("Paper1 PPO requires the Paper1 actor architecture")
+        if architecture == "paper1_notebook":
+            if not arrival:
+                raise ValueError("Paper1 adapter requires arrival_soc observations")
+            from .transfer import Paper1Actor
+            self.actor = Paper1Actor(fleet, cfg["transfer_actor_hidden"]).to(device)
+        elif architecture == "default":
+            self.actor = mlp(2 * fleet + (6 if arrival else 7), cfg["hidden"], 1).to(device)
+        else:
+            raise ValueError("unknown actor_architecture")
+        critic_dim = (5 if arrival else 6) * fleet + 2
+        hidden = cfg["hidden"]
+        if self.paper1_ppo:
+            self.critic = torch.nn.Sequential(
+                torch.nn.Linear(critic_dim, hidden), torch.nn.ReLU(),
+                torch.nn.Linear(hidden, hidden), torch.nn.ReLU(),
+                torch.nn.Linear(hidden, hidden), torch.nn.ReLU(),
+                torch.nn.Linear(hidden, 1),
+            ).to(device)
+        else:
+            self.critic = mlp(critic_dim, hidden, 1).to(device)
         # Begin with unbiased request logits; requests are not slot allocations.
-        torch.nn.init.orthogonal_(self.actor[-1].weight, gain=0.01)
-        torch.nn.init.zeros_(self.actor[-1].bias)
+        if architecture == "default":
+            torch.nn.init.orthogonal_(self.actor[-1].weight, gain=0.01)
+            torch.nn.init.zeros_(self.actor[-1].bias)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg["actor_lr"])
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg["critic_lr"])
+
+    def _distribution(self, actors):
+        if self.paper1_ppo:
+            return torch.distributions.Categorical(logits=self.actor.categorical_logits(actors))
+        return torch.distributions.Bernoulli(logits=self.actor(actors).squeeze(-1))
 
     @torch.no_grad()
     def request_probabilities(self, obs):
         actors = torch.as_tensor(obs["actor"], device=self.device)
-        return self.actor(actors).squeeze(-1).sigmoid().cpu().numpy()
+        probs = self._distribution(actors).probs
+        return (probs[..., 0] if self.paper1_ppo else probs).cpu().numpy()
 
     @torch.no_grad()
-    def act(self, obs, deterministic=False):
+    def act(self, obs, deterministic=False, *, include_probabilities=False):
         actors = torch.as_tensor(obs["actor"], device=self.device)
-        dist = torch.distributions.Bernoulli(logits=self.actor(actors).squeeze(-1))
-        action = (dist.probs >= 0.5).float() if deterministic else dist.sample()
-        return action.cpu().numpy().astype(np.int8), dist.log_prob(action).cpu().numpy(), self.value(obs)
+        dist = self._distribution(actors)
+        if self.paper1_ppo:
+            sampled = dist.logits.argmax(dim=-1) if deterministic else dist.sample()
+            # Paper1 uses action 0 for charge, while the JV scheduler expects 1.
+            action = 1 - sampled
+            probabilities = dist.probs[..., 0]
+        else:
+            sampled = (dist.probs >= 0.5).float() if deterministic else dist.sample()
+            action = sampled
+            probabilities = dist.probs
+        result = (action.cpu().numpy().astype(np.int8),
+                  dist.log_prob(sampled).cpu().numpy(), self.value(obs))
+        if include_probabilities:
+            return (*result, probabilities.cpu().numpy())
+        return result
 
     @torch.no_grad()
     def value(self, obs):
@@ -64,39 +109,52 @@ class MAPPO:
     def update(self, rollout, last_value, *, upper_steps=0):
         cfg = self.cfg
         entropy_coef = self.entropy_coefficient(upper_steps)
-        adv, returns = gae(
-            [x["reward"] * cfg["reward_scale"] for x in rollout],
-            [x["value"] for x in rollout], [x["done"] for x in rollout],
-            last_value, cfg["gamma"], cfg["gae_lambda"],
-        )
-        adv = (adv - adv.mean()) / max(float(adv.std()), 1e-8)
         to_tensor = lambda x: torch.as_tensor(np.asarray(x), dtype=torch.float32, device=self.device)
+        rewards = [x["reward"] * cfg["reward_scale"] for x in rollout]
+        values = [x["value"] for x in rollout]
+        dones = [x["done"] for x in rollout]
+        if self.paper1_ppo:
+            rewards, values, dones = map(to_tensor, (rewards, values, dones))
+        adv, returns = gae(rewards, values, dones, last_value, cfg["gamma"], cfg["gae_lambda"])
         actors = to_tensor([x["obs"]["actor"] for x in rollout])
         critics = to_tensor([x["obs"]["critic"] for x in rollout])
         actions = to_tensor([x["action"] for x in rollout])
+        if self.paper1_ppo:
+            actions = 1 - actions.long()
         old_logp = to_tensor([x["logp"] for x in rollout])
         old_values = to_tensor([x["value"] for x in rollout])
-        adv, returns = to_tensor(adv), to_tensor(returns)
+        if self.paper1_ppo:
+            if adv.numel() > 1:
+                adv = (adv - adv.mean()) / (adv.std(unbiased=False) + 1e-8)
+        else:
+            adv = (adv - adv.mean()) / max(float(adv.std()), 1e-8)
+            adv, returns = to_tensor(adv), to_tensor(returns)
+        actor_grad_norm = cfg.get("max_grad_norm_actor", cfg["max_grad_norm"])
+        critic_grad_norm = cfg.get("max_grad_norm_critic", cfg["max_grad_norm"])
+        value_coef = cfg.get("value_coef", 0.5)
         result = []
         for _ in range(cfg["epochs"]):
             order = torch.randperm(len(rollout), device=self.device)
             for start in range(0, len(order), cfg["minibatch_frames"]):
                 ids = order[start:start + cfg["minibatch_frames"]]
-                dist = torch.distributions.Bernoulli(logits=self.actor(actors[ids]).squeeze(-1))
+                dist = self._distribution(actors[ids])
                 log_ratio = dist.log_prob(actions[ids]) - old_logp[ids]
                 ratio = log_ratio.exp()
                 unclipped = ratio * adv[ids, None]
                 clipped = ratio.clamp(1 - cfg["clip"], 1 + cfg["clip"]) * adv[ids, None]
                 actor_loss = -torch.minimum(unclipped, clipped).mean() - entropy_coef * dist.entropy().mean()
-                backward_step(actor_loss, self.actor_opt, self.actor.parameters(), cfg["max_grad_norm"])
+                backward_step(actor_loss, self.actor_opt, self.actor.parameters(), actor_grad_norm)
                 value = self.critic(critics[ids]).squeeze(-1)
-                value_error = (value - returns[ids]).square()
-                if cfg.get("value_clip") is not None:
+                if cfg.get("value_clip") is None:
+                    value_loss = torch.nn.functional.mse_loss(value, returns[ids])
+                else:
+                    value_error = (value - returns[ids]).square()
                     value_clipped = old_values[ids] + (value - old_values[ids]).clamp(-cfg["value_clip"], cfg["value_clip"])
-                    value_error = torch.maximum(value_error, (value_clipped - returns[ids]).square())
-                value_loss = 0.5 * value_error.mean()
-                backward_step(value_loss, self.critic_opt, self.critic.parameters(), cfg["max_grad_norm"])
-                result.append((float(actor_loss.detach()), float(value_loss.detach())))
+                    value_loss = torch.maximum(value_error, (value_clipped - returns[ids]).square()).mean()
+                scaled_value_loss = value_coef * value_loss
+                backward_step(scaled_value_loss, self.critic_opt, self.critic.parameters(), critic_grad_norm)
+                logged_value_loss = value_loss if self.paper1_ppo else scaled_value_loss
+                result.append((float(actor_loss.detach()), float(logged_value_loss.detach())))
         means = np.mean(result, axis=0)
         return {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result), "mappo_entropy_coef": entropy_coef}
 
