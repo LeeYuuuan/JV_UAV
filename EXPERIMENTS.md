@@ -57,3 +57,20 @@
 - Normal frames average 10 steps; death-shortened frames average actual executed K. No clipping or time gate. Lower OOB and distance penalties are excluded. Upper death costs remain 20 and shared final-return costs 15 per UAV, without double counting; C/W costs remain zero.
 - Reward logs expose `frame_mean_lower_collection` and `frame_mean_lower_backlog`; existing resolved configs and provenance capture the mode. Changes to lower data weights intentionally also affect upper data rewards.
 - Upper inputs remain arrival SOC, ID, own status and C/W occupancy. Old checkpoint configs without this reward mode retain serving/backlog reward and warn on resume. Start a fresh run to use this revision.
+
+
+## 2026-10-02: Paper1 upper actor transfer interface
+
+- Added `--upper-pretrained PATH` for a fresh joint run (mutually exclusive with `--resume`). The supported source is the Paper1 notebook categorical actor: four ReLU hidden layers, two output logits. This differs from the smaller actor in old src/agents/mappo.
+- Current arrival-SOC observations are reordered into [own arrival SOC, own status one-hot, C/W ratios, normalized ID, all arrival SOCs]. Old action 0 means request charge; current action 1 means request charge. Bernoulli logit is old logit[0] minus old logit[1].
+- Only actor parameters are imported. Critic, optimizers, SAC and replay start fresh. Joint fine-tuning starts normally; no automatic freezing. Architecture and source path/SHA256 persist in resolved configuration and checkpoints; resume requires no source file.
+- Source audit: `Paper1_v1/code/checkpoints/charging/mappo_charging_n6/ckpt.pt`, SHA256 e6b8fbb081fbc0f45d2524f8a8aec88683ab884690dd685145e84c5fedf6a798, actually has actor input 15 and critic input 37, consistent with seven UAVs. Six-UAV notebooks report 14/32. Filename is not reliable evidence of fleet size. Loader rejects this file for the current six-UAV environment; no fabricated UAV or dropped column. Matching weights or an explicitly agreed approximate mapping are required before a six-UAV transfer run.
+- Validation: 78 tests pass, including feature order, action probability conversion, gradient flow and exact checkpoint resume. For the actual source weights on seven-UAV test inputs, converted charge probabilities differ by at most 5.96e-8. This verifies numerical conversion, not performance on the new environment.
+
+
+## 2026-11-12: six-UAV transfer configuration and wiring smoke
+
+- Added configs/training_transfer_n6.yaml and TRANSFER_N6.md. Fresh runs require --upper-pretrained, six UAVs and source hidden width512. Actor warm start only; fresh critic/SAC/optimizers; joint fine-tuning with existing learning settings.
+- Source architecture matches train_charging_mappo_n6_decay_4000.ipynb: 14 -> 512x4 ReLU -> 2. Input reorder and action reversal preserve charge probabilities for identical SOC values. Arrival SOC intentionally changes the old current-SOC semantics. Upper inputs use no RunningMeanStd.
+- 80 tests pass. Additional CLI checks reject missing source and existing seven-UAV weights. Generated RANDOM UNTRAINED weights from actual old notebook classes and ran/resumed smoke: 4 frames,36 lower steps,2 MAPPO and28 SAC updates; actor parameters changed. This is wiring validation, not convergence evidence.
+- All new temporary/test artifacts are under D:/VScode/UAV_Joint_Simulation/experiments/transfer_n6_smoke_20261112. Earlier source audit moved to experiments/source_audit_20261112. final_code is reserved; current development stays in JV_UAV.

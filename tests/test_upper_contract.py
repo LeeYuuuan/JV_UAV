@@ -103,3 +103,18 @@ def test_all_binary_requests_preserve_capacity_and_scene_until_begin():
             np.testing.assert_array_equal(scene.uav_status, before_status)
             np.testing.assert_array_equal(scene.uav_battery, before_battery)
             np.testing.assert_array_equal(scene.uav_pos, before_pos)
+
+
+def test_overcapacity_chargers_are_rejected_without_silent_eviction():
+    _, scene, energy, _, _ = build_env()
+    scene.uav_status[:] = [2, 2, 2, 0, 0, 0]
+    before = scene.uav_status.copy()
+    scheduler = LowestArrivalBatteryScheduler(scene.cfg, energy)
+    for actions in (np.ones(6), np.zeros(6)):
+        try:
+            scheduler.make_plan(scene, actions)
+        except ValueError as error:
+            assert 'charging occupancy exceeds' in str(error)
+        else:
+            raise AssertionError('Invalid charging occupancy was silently accepted')
+        np.testing.assert_array_equal(scene.uav_status, before)
