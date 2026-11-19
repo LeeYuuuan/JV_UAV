@@ -80,6 +80,7 @@ class LowStepResult:
     )
     reward: float = 0.0
     reward_terms: dict[str, float] = field(default_factory=dict)
+    failure_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +89,7 @@ class LowFrameResult:
     completed_all_steps: bool
     terminated: bool
     termination_reason: str | None
+    failure_records: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def reward_sum(self) -> float:

@@ -1,0 +1,98 @@
+# Per-event reference responsibility; fresh run to avoid mixing replay rewards.
+require_upper_pretrained: false
+transfer_fleet: 6
+seed: 43
+total_upper_steps: 409600
+console_log_mode: mappo_update
+upper_reward_overrides:
+  upper_reward_mode: paper1_serving_backlog
+  upper_serving_weight: 5.0
+  upper_charging_weight: 0.0
+  upper_waiting_weight: 0.0
+  upper_dead_weight: 10.0
+  upper_frame_max_backlog_weight: 0.5
+  upper_backlog_scale_packets: 800.0
+  upper_backlog_mode: linear
+  upper_backlog_cap: 1.5
+  upper_lower_return_failure_weight: 0.0
+  upper_episode_failure_weight: 0.0
+  upper_reward_divisor: 10.0
+train_log_every_frames: 10
+plot_every_frames: 100
+diagnostics_every_low_steps: 100
+upper_rollout_steps: 1024
+sac_updates_per_step: 1
+checkpoint_every_mappo: 1
+evaluate_every_mappo: 0
+evaluation_seeds:
+- 1001
+- 1002
+- 1003
+normalization:
+  clip: 10.0
+  min_std_sec: 60.0
+sac:
+  include_uav_id: true
+  hidden: 128
+  heads: 4
+  layers: 2
+  lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  random_steps: 10000
+  warmup_mode: waypoint
+  warmup_random_fraction: 0.2
+  warmup_energy_guard: true
+  warmup_return_reserve_frac: 0.02
+  learning_starts: 10000
+  reward_scale: 1.0
+  max_grad_norm: 1.0
+mappo:
+  actor_architecture: paper1_notebook
+  transfer_actor_hidden: 512
+  observation_mode: current_soc_return_soc
+  paper1_ppo: true
+  hidden: 512
+  actor_lr: 0.0001
+  critic_lr: 0.0001
+  gamma: 0.95
+  gae_lambda: 0.95
+  epochs: 4
+  minibatch_frames: 128
+  clip: 0.2
+  value_clip: null
+  entropy_coef: 0.01
+  reward_scale: 1.0
+  max_grad_norm: 1.0
+  max_grad_norm_actor: 0.5
+  max_grad_norm_critic: 2.0
+  value_coef: 0.5
+  credit_diagnostics: true
+  include_own_return_soc: true
+revision: joint_soc21_reference_failure_v4
+checkpoint_every_frames: 1000
+evaluate_every_frames: 200
+full_evaluate_every_frames: 2000
+eval_render_every_frames: 2000
+lower_reward:
+  mode: topk
+  k: 20
+  rho: 0.5
+  scale: 300.0
+  offset: 0.0
+  terminal_tail: true
+update_schedule:
+  mode: staged
+  switch_after_sac_updates: 250000
+  late_sac_updates_per_mappo: 1
+compact_episode_logs: true
+failure_responsibility:
+  mode: reference_return_v1
+  inward_fraction: 0.5
+  reference_margin_soc: 0.01
+  shared_upper_weight: 0.5
+  comparison_tolerance_soc: 1.0e-07

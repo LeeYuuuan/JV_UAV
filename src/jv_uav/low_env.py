@@ -118,7 +118,7 @@ class LowEnv:
             raise ValueError(f"normalized low action must have shape {expected_shape}")
 
         normalized = np.clip(normalized, -1.0, 1.0)
-        # [-1, 1] → physical displacement in metres
+        # [-1, 1] â†’ physical displacement in metres
         active_displacements_m = (normalized * self.scene.max_move_distance_m)
 
         result = self.scene.evolve_low_step(
@@ -138,15 +138,20 @@ class LowEnv:
         self,
         result: LowStepResult,
         unsafe_serving_ids: np.ndarray,
+        *, lower_failure_weights: np.ndarray | None = None,
     ) -> None:
         result.return_unsafe_ids = unsafe_serving_ids.copy()
+        weights = (np.ones(len(unsafe_serving_ids), dtype=np.float64) if lower_failure_weights is None
+                   else np.asarray(lower_failure_weights, dtype=np.float64))
+        if weights.shape != (len(unsafe_serving_ids),) or not np.isfinite(weights).all() or np.any((weights < 0) | (weights > 1)):
+            raise ValueError("one valid lower responsibility weight is required per failed UAV")
 
         result.reward, result.reward_terms = self.reward_model(
             result,
-            final_return_failure_count=len(unsafe_serving_ids.copy()),
+            final_return_failure_count=float(weights.sum()),
             final_return_distance_sum_m=float(np.linalg.norm(
                 result.position_after[unsafe_serving_ids] - self.scene.airship_pos, axis=1
-            ).sum()),
+            ).dot(weights)),
         )
 
 

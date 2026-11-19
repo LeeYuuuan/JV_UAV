@@ -63,7 +63,7 @@ class UpperReward:
             raise ValueError("upper_episode_failure_weight must be finite and nonnegative")
 
     def __call__(
-        self, serving_count: int, frame_max_mean: float, dead_count: int,
+        self, serving_count: int, frame_max_mean: float, dead_count: float,
         *, episode_failed: bool = False, charging_count: int = 0, waiting_count: int = 0,
         lower_return_failure_count: int = 0,
         lower_reward_terms: list[Mapping[str, float]] | None = None,
@@ -127,6 +127,16 @@ class UpperEnv:
         self.low_runner = low_runner
         self.metrics = metrics
         self.upper_reward = UpperReward(cfg)
+        self.failure_assessor = None
+        settings = cfg.get("failure_responsibility", {})
+        if settings and settings.get("mode", "legacy") != "legacy":
+            from .failure_responsibility import FailureResponsibility
+            if self.upper_reward.mode != "paper1_serving_backlog":
+                raise ValueError("reference failure responsibility requires paper1_serving_backlog")
+            if self.upper_reward.lower_return_failure_weight or self.upper_reward.episode_failure_weight:
+                raise ValueError("disable legacy upper failure costs before enabling responsibility allocation")
+            self.failure_assessor = FailureResponsibility(cfg, energy_model)
+        self.low_runner.failure_assessor = self.failure_assessor
         self.max_frames = int(section(cfg, "time")["episode_upper_frames"])
         self.frame_sec = scene.low_step_sec * scene.low_steps_per_frame
 
@@ -144,13 +154,38 @@ class UpperEnv:
     ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         plan = self.scheduler.make_plan(self.scene, upper_action)
         self.scene.begin_upper_frame(plan)
-        low_frame = self.low_runner.run_frame(plan)
+        deferred = []
+        callback = self.low_runner.on_step
+        if self.failure_assessor is not None:
+            def defer_final(obs, action, result):
+                failed = result.dead_during_step.size or result.return_unsafe_ids.size
+                last = result.step_in_frame == self.scene.low_steps_per_frame - 1
+                if failed or last:
+                    deferred.append((obs, action, result))
+                elif callback is not None:
+                    callback(obs, action, result)
+            self.low_runner.on_step = defer_final
+        try:
+            low_frame = self.low_runner.run_frame(plan)
+        finally:
+            self.low_runner.on_step = callback
 
         settlement: dict[str, np.ndarray] = {}
         if low_frame.completed_all_steps:
             settlement = self.scene.complete_upper_frame(plan, self.energy_model)
 
         dead_ids = self.scene.dead_ids()
+        failure_records = list(low_frame.failure_records)
+        if self.failure_assessor is not None:
+            for uid in settlement.get("failed_return_ids", []):
+                record = self.failure_assessor.assess(uid, "return_failed_during_settlement", self.scene)
+                failure_records.append(record)
+                low_frame.steps[-1].failure_records.append(record)
+            from .failure_responsibility import validate_failure_records
+            previous_dead = np.flatnonzero(plan.frame_start_status == int(UAVStatus.DEAD))
+            newly_dead = np.setdiff1d(dead_ids, previous_dead)
+            validate_failure_records(failure_records, newly_dead)
+            low_frame.failure_records = failure_records
         serving_count = int(np.sum(plan.assigned_status == int(UAVStatus.SERVING)))
         # Final-return failures carry a separate shared-responsibility cost;
         # exclude them from the ordinary upper death count to avoid double charging.
@@ -171,7 +206,9 @@ class UpperEnv:
             pre_service_maxima = [step.system_max_pre_service for step in low_frame.steps]
             frame_max_pre = float(np.mean(pre_service_maxima)) if pre_service_maxima else 2400.0
             reward, reward_terms = self.upper_reward(
-                counts[0], frame_max_pre, int(dead_ids.size),
+                counts[0], frame_max_pre,
+                (sum(r["upper_weight"] for r in failure_records)
+                 if self.failure_assessor is not None else int(dead_ids.size)),
                 charging_count=counts[1], waiting_count=counts[2],
             )
         else:
@@ -195,7 +232,15 @@ class UpperEnv:
             "serving_count_during_frame": serving_count,
             "dead_ids_end": dead_ids.copy(),
             "trace": self.trace,
+            "failure_records": failure_records,
         }
+        if self.failure_assessor is not None:
+            # A terminal episode has one tail cost, shared across its death events.
+            info["failure_tail_lower_weight"] = (float(np.mean([r["lower_weight"] for r in failure_records]))
+                                                 if failure_records else 0.)
+            for obs, action, result in deferred:
+                if callback is not None:
+                    callback(obs, action, result)
         return observation, reward, terminated, truncated, info
 
     def render(self, **kwargs):

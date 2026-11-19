@@ -1,4 +1,4 @@
-"""Joint training with a constant number of SAC updates per replay transition."""
+"""Joint training with configurable dense or matched SAC updates."""
 from __future__ import annotations
 
 import copy
@@ -77,6 +77,11 @@ class JointTrainer:
         self.rng = np.random.default_rng(cfg["seed"])
         self.env = build_training_env(self.env_cfg, cfg)
         self.env.reset()
+        move = float(self.env_cfg["uavs"]["max_move_time_sec"])
+        dt = self.env.scene.low_step_sec
+        endpoints = self.env.energy_model.serving_energy_fraction(
+            np.array([0., move]), np.array([dt, dt-move]))
+        self.minimum_service_soc = float(endpoints.min()) * self.env.scene.low_steps_per_frame
         self.exploration = WaypointExploration(
             self.env.scene, self.rng, cfg["sac"].get("warmup_random_fraction", 0.2),
             energy_guard=cfg["sac"].get("warmup_energy_guard", False),
@@ -178,11 +183,19 @@ class JointTrainer:
             self._finish_pending(self.env.scene.observe_lower(), True)
             self.episodes += 1
             self.episode_over = True
-        self.rollout.append({"obs": observation, "action": action.copy(), "logp": logp.copy(), "value": value, "reward": reward, "done": done})
+        self.rollout.append({"obs": observation, "action": action.copy(), "logp": logp.copy(), "value": value, "reward": reward, "done": done,
+                             "upper_steps": self.upper_steps,
+                             "battery_start": info["frame_plan"].frame_start_battery.tolist(),
+                             "assigned_status": info["frame_plan"].assigned_status.tolist(),
+                             "minimum_service_soc": self.minimum_service_soc,
+                             "failure_records": info.get("failure_records", [])})
         updated = False
+        upper_credit_trace = None
         if len(self.rollout) == self.cfg["upper_rollout_steps"]:
             last_value = 0.0 if done else self.mappo.value(upper_observation(self.env.scene, self.env.energy_model, self.mappo.observation_mode))
-            self.last_losses.update(self.mappo.update(self.rollout, last_value, upper_steps=self.upper_steps))
+            update_metrics = self.mappo.update(self.rollout, last_value, upper_steps=self.upper_steps)
+            upper_credit_trace = update_metrics.pop("mappo_credit_trace", None)
+            self.last_losses.update(update_metrics)
             self.rollout.clear()
             self.mappo_updates += 1
             updated = True
@@ -211,6 +224,7 @@ class JointTrainer:
             "episode_metrics": episode_metrics,
             "terminated": bool(terminated), "truncated": bool(truncated),
             "mappo_updated": updated, "replay_size": len(self.replay),
+            "upper_credit_trace": upper_credit_trace,
             "pending_transition": self.pending is not None,
             "dead_ids": info["dead_ids_end"].tolist(),
             "system_max_backlog": float(self.env.scene.sensor_backlog.max()),
@@ -224,12 +238,18 @@ class JointTrainer:
             "battery_end": self.env.scene.uav_battery.tolist(),
             "assigned_status": info["frame_plan"].assigned_status.tolist(),
             "termination_reason": self.env.trace.frames[-1].termination_reason,
+            "upper_observation_mode": self.mappo.observation_mode,
+            "upper_input_soc": observation["actor"][0, :self.env.scene.num_uavs].tolist(),
+            "upper_input_return_soc": (observation["actor"][0, -self.env.scene.num_uavs:].tolist()
+                                       if self.mappo.observation_mode == "current_soc_return_soc" else None),
             "request_probabilities": probabilities.tolist(),
             "charge_requests": int(info["frame_plan"].requested_charge.sum()),
             "charging_assignments": int(np.sum(info["frame_plan"].assigned_status == 2)),
             "waiting_assignments": int(np.sum(info["frame_plan"].assigned_status == 1)),
             "charge_added_soc": float(np.sum(info["settlement"].get("charge_added_frac", 0.0))),
             "upper_reward_terms": dict(info["reward_terms"]),
+            "failure_records": info.get("failure_records", []),
+            "failure_tail": info.get("failure_tail"),
             "charging_diagnostics": charging,
             **self.last_losses,
         }
@@ -260,6 +280,9 @@ class JointTrainer:
             policy_trace.append({
                 "frame": len(policy_trace) + 1,
                 "charging_diagnostics": charging_record(info),
+                "upper_input_soc": obs["actor"][0, :env.scene.num_uavs].tolist(),
+                "upper_input_return_soc": (obs["actor"][0, -env.scene.num_uavs:].tolist()
+                                           if self.mappo.observation_mode == "current_soc_return_soc" else None),
                 "request_probabilities": probabilities.tolist(),
                 "actions": action.tolist(),
                 "assigned_status": plan.assigned_status.tolist(),
@@ -269,6 +292,8 @@ class JointTrainer:
                 "charge_added_frac": added.tolist(),
                 "low_steps": len(info["low_frame"].steps),
                 "reward_terms": dict(info["reward_terms"]),
+                "failure_records": info.get("failure_records", []),
+                "failure_tail": info.get("failure_tail"),
                 "termination_reason": env.trace.frames[-1].termination_reason,
             })
             total_return += reward
@@ -340,7 +365,7 @@ class JointTrainer:
         if "switch_after_sac_updates" in state["train_cfg"]:
             warnings.warn("The retired SAC frequency switch is ignored; per-transition updates continue throughout training.", UserWarning)
         saved_reward = state["env_cfg"]["reward"]
-        if trainer.mappo.observation_mode != "arrival_soc":
+        if trainer.mappo.observation_mode not in ("arrival_soc", "current_soc_return_soc"):
             warnings.warn("This checkpoint retains the legacy upper current-SOC/return-time inputs. Start a fresh run for arrival-SOC inputs.", UserWarning)
         if trainer.cfg.get("lower_reward") is None and (saved_reward.get("upper_reward_mode", "serving_backlog") != "lower_data_mean"
                 or saved_reward.get("upper_backlog_scale_packets") != 2000.0

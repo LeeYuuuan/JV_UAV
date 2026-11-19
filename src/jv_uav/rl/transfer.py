@@ -6,13 +6,17 @@ from torch import nn
 
 
 class Paper1Actor(nn.Module):
-    """Current arrival-SOC features -> old feature order -> charge log-odds."""
-    def __init__(self, fleet, hidden=512):
+    """Paper1 feature order, optionally extended with separate return SOC costs."""
+    def __init__(self, fleet, hidden=512, include_return_soc=False, include_own_return_soc=False):
         super().__init__()
         self.fleet = fleet
+        self.include_return_soc = include_return_soc
+        self.include_own_return_soc = include_own_return_soc
+        if include_own_return_soc and not include_return_soc:
+            raise ValueError("own return SOC requires the separate return SOC feature block")
         layers = []
         for i in range(4):
-            layers.extend([nn.Linear(fleet + 8 if i == 0 else hidden, hidden), nn.ReLU()])
+            layers.extend([nn.Linear(fleet + 8 + (fleet if include_return_soc else 0) + int(include_own_return_soc) if i == 0 else hidden, hidden), nn.ReLU()])
         self.net = nn.Sequential(*layers)
         self.logits = nn.Linear(hidden, 2)
 
@@ -21,7 +25,15 @@ class Paper1Actor(nn.Module):
         soc, identity = obs[..., :n], obs[..., n:2*n]
         own_soc = (soc * identity).sum(dim=-1, keepdim=True)
         ids = (identity * torch.arange(n, device=obs.device, dtype=obs.dtype)).sum(dim=-1, keepdim=True) / max(n-1, 1)
-        return torch.cat([own_soc, obs[..., 2*n:2*n+4], obs[..., -2:], ids, soc], dim=-1)
+        features = torch.cat([own_soc, obs[..., 2*n:2*n+4], obs[..., 2*n+4:2*n+6], ids, soc], dim=-1)
+        if self.include_return_soc:
+            costs = obs[..., 2*n+6:3*n+6]
+            features = torch.cat([features, costs], dim=-1)
+            if self.include_own_return_soc:
+                own_cost = (costs * identity).sum(dim=-1, keepdim=True)
+                # Append a dedicated self feature without moving legacy columns.
+                features = torch.cat([features, own_cost], dim=-1)
+        return features
 
     def categorical_logits(self, obs):
         return self.logits(self.net(self.old_features(obs)))
@@ -32,7 +44,11 @@ class Paper1Actor(nn.Module):
         return logits[..., :1] - logits[..., 1:2]
 
 
-def read_paper1_actor(path, fleet):
+def read_paper1_actor(path, fleet, observation_mode="arrival_soc", *, include_own_return_soc=False):
+    if observation_mode not in ("arrival_soc", "current_soc_return_soc"):
+        raise ValueError("unsupported Paper1 target observation mode")
+    if include_own_return_soc and observation_mode != "current_soc_return_soc":
+        raise ValueError("own return SOC requires current_soc_return_soc observations")
     path = Path(path)
     payload = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(payload, dict) or "actor" not in payload:
@@ -63,4 +79,19 @@ def read_paper1_actor(path, fleet):
                     actor_input_dim=fleet+8, source_soc="current_soc_fraction",
                     upper_running_normalization=False, negative_arrival_soc="preserved",
                     probability_mapping="sigmoid(old_charge_logit_0 - old_serve_logit_1)")
+    if observation_mode == "current_soc_return_soc":
+        # The original 14 features now retain their original current-SOC meaning.
+        # Zero extra columns preserve the old policy until return-cost weights learn.
+        state = dict(state)
+        weight = state["net.0.weight"]
+        state["net.0.weight"] = torch.cat([weight, weight.new_zeros(hidden, fleet + int(include_own_return_soc))], dim=1)
+        metadata.update(soc_mapping="current_soc_plus_separate_return_cost",
+                        actor_input_dim=2*fleet+8+int(include_own_return_soc), added_return_cost_columns="zero_initialized",
+                        actor_input_order=["own_current_soc", "own_status_onehot_4", "charging_ratio",
+                                           "waiting_ratio", "id_div_N_minus_1", "all_current_soc",
+                                           "all_return_energy_soc"])
+        if include_own_return_soc:
+            metadata["actor_input_order"].append("own_return_energy_soc")
+        metadata["include_own_return_soc"] = bool(include_own_return_soc)
+        metadata.pop("negative_arrival_soc", None)
     return state, metadata

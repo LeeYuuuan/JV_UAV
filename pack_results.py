@@ -73,7 +73,7 @@ def pack(run_dir, output=None, recent_evals=3):
     manifest = dict(run_dir=str(run_dir), snapshot_started_utc=stamp,
                     checkpoints_included=False, recent_evals=recent_evals, files={}, skipped=[])
     names = ["resolved_config.json", "live_status.json", "latest_eval.json", "train.jsonl", "eval.jsonl",
-             "charging_frames.jsonl.gz", "episodes.jsonl.gz", "training_curves.json",
+             "charging_frames.jsonl.gz", "episodes.jsonl.gz", "upper_credit.jsonl.gz", "training_curves.json",
              "training_curves.png", "lower_training_curves.png", "upper_request_probability.png",
              "evaluation_curves.png", "loss_curves.png"]
     paths = [run_dir / name for name in names]

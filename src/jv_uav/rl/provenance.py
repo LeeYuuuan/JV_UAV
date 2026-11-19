@@ -48,6 +48,7 @@ def record_run(root, output, trainer, args):
         'effective_lower_reward_override': trainer.cfg.get('lower_reward'),
         'training_revision': trainer.cfg.get('revision'),
         'update_schedule': trainer.cfg.get('update_schedule'),
+        'failure_responsibility': trainer.cfg.get('failure_responsibility'),
         'arguments': {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
         'resume_from': str(args.resume.resolve()) if args.resume else None,
         'starting_counters': {key: getattr(trainer, key) for key in ('upper_steps', 'low_steps', 'episodes', 'sac_updates', 'mappo_updates')},

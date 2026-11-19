@@ -50,7 +50,7 @@ def format_progress(rows, elapsed, *, by_update=False, partial=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-config", type=Path, default=ROOT / "configs/default.yaml")
-    parser.add_argument("--train-config", type=Path, default=ROOT / "configs/training_joint_topk.yaml")
+    parser.add_argument("--train-config", type=Path, default=ROOT / "configs/training_joint_responsibility_v4.yaml")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-note", default="", help="Short experiment description saved with source and effective configuration.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -107,13 +107,15 @@ def main():
         if args.upper_pretrained:
             from jv_uav.rl.transfer import read_paper1_actor
             try:
-                transfer_state, metadata = read_paper1_actor(args.upper_pretrained, int(env_cfg["uavs"]["count"]))
+                target_mode = cfg["mappo"].get("observation_mode", "arrival_soc")
+                transfer_state, metadata = read_paper1_actor(args.upper_pretrained, int(env_cfg["uavs"]["count"]), target_mode,
+                    include_own_return_soc=cfg["mappo"].get("include_own_return_soc", False))
             except (ValueError, RuntimeError, OSError) as error:
                 parser.error(str(error))
             expected_hidden = cfg["mappo"].get("transfer_actor_hidden")
             if expected_hidden is not None and metadata["hidden"] != expected_hidden:
                 parser.error(f"Source actor hidden width {metadata['hidden']} does not match transfer config {expected_hidden}")
-            cfg["mappo"].update(observation_mode="arrival_soc", actor_architecture="paper1_notebook",
+            cfg["mappo"].update(observation_mode=target_mode, actor_architecture="paper1_notebook",
                                 transfer_actor_hidden=metadata["hidden"])
             cfg["upper_transfer"] = metadata
         trainer = JointTrainer(env_cfg, cfg, device)
@@ -188,13 +190,22 @@ def main():
                 output / 'charging_frames.jsonl.gz', 'at', encoding='utf-8', compresslevel=5) as charge_log:
             for step_index in range(steps):
                 row = trainer.step()
+                credits = row.pop("upper_credit_trace", None)
+                if credits:
+                    with gzip.open(output / "upper_credit.jsonl.gz", "at", encoding="utf-8", compresslevel=5) as credit_log:
+                        for credit in credits:
+                            credit_log.write(json.dumps(dict(mappo_update=trainer.mappo_updates, **credit),
+                                                        allow_nan=False, separators=(',', ':')) + "\n")
                 charge_log.write(json.dumps(dict(upper_steps=row['upper_steps'],
                     episode=trainer.episodes if trainer.episode_over else trainer.episodes + 1,
                     request_probabilities=row["request_probabilities"],
+                    upper_observation_mode=row["upper_observation_mode"],
+                    upper_input_soc=row["upper_input_soc"], upper_input_return_soc=row["upper_input_return_soc"],
                     frame_in_episode=trainer.env.scene.upper_step,
                     battery_start=row["battery_start"], battery_end=row["battery_end"],
                     assigned_status=row["assigned_status"], lower_reward=row["lower_reward"],
                     lower_reward_terms=row["lower_reward_terms"], phase=row["phase"],
+                    failure_records=row["failure_records"], failure_tail=row["failure_tail"],
                     **row['charging_diagnostics']), separators=(',', ':')) + '\n')
                 charge_log.flush()  # Persist every completed frame, independently of console output.
                 if (row['upper_steps'] % disk_log_every == 0 or row['terminated']

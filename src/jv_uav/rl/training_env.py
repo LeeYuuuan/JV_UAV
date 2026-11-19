@@ -1,5 +1,6 @@
 """Optional training rewards, shared by joint training and evaluation."""
 from __future__ import annotations
+import copy
 import numpy as np
 from ..low_env import LowReward
 from ..upper_env import UpperEnv
@@ -7,6 +8,9 @@ from ..factory import build_smoke_test_runner
 
 
 def build_training_env(env_cfg, train_cfg):
+    env_cfg = copy.deepcopy(env_cfg)
+    if "failure_responsibility" in train_cfg:
+        env_cfg["failure_responsibility"] = copy.deepcopy(train_cfg["failure_responsibility"])
     env = build_smoke_test_runner(env_cfg).upper_env
     reward = train_cfg.get("lower_reward")
     if reward is None:
@@ -76,7 +80,7 @@ class FailureTailEnv(UpperEnv):
             transition = super().step(action)
         finally:
             self.low_runner.on_step = callback
-        _, _, terminated, _, _ = transition
+        _, _, terminated, _, info = transition
         for obs, low_action, result in deferred:
             if terminated:
                 if "terminal_future_backlog" in result.reward_terms:
@@ -91,7 +95,10 @@ class FailureTailEnv(UpperEnv):
                 maxima = future.max(axis=0)
                 tail = np.sum(self.failure_gamma ** k *
                               (self.failure_offset - maxima) / self.failure_scale)
-                result.reward_terms["terminal_future_backlog"] = float(tail)
+                weight = float(info.get("failure_tail_lower_weight", 1.))
+                info["failure_tail"] = dict(unweighted_cost=float(tail), lower_weight=weight,
+                                            weighted_lower_cost=float(tail*weight))
+                result.reward_terms["terminal_future_backlog"] = float(tail*weight)
                 result.reward = float(sum(result.reward_terms.values()))
             if callback is not None:
                 callback(obs, low_action, result)

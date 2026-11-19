@@ -28,23 +28,29 @@ class MAPPO:
     def __init__(self, fleet, cfg, device):
         self.cfg, self.device = cfg, torch.device(device)
         self.observation_mode = cfg.get("observation_mode", "current_soc_return_time")
-        if self.observation_mode not in ("arrival_soc", "current_soc_return_time"):
+        if self.observation_mode not in ("arrival_soc", "current_soc_return_time", "current_soc_return_soc"):
             raise ValueError("unknown upper observation mode")
         arrival = self.observation_mode == "arrival_soc"
+        return_soc = self.observation_mode == "current_soc_return_soc"
         architecture = cfg.get("actor_architecture", "default")
+        own_return = cfg.get("include_own_return_soc", False)
+        if type(own_return) is not bool:
+            raise ValueError("include_own_return_soc must be boolean")
+        if own_return and (not return_soc or architecture != "paper1_notebook"):
+            raise ValueError("own return SOC requires the Paper1 actor with current_soc_return_soc")
         self.paper1_ppo = cfg.get("paper1_ppo", False)
         if self.paper1_ppo and architecture != "paper1_notebook":
             raise ValueError("Paper1 PPO requires the Paper1 actor architecture")
         if architecture == "paper1_notebook":
-            if not arrival:
-                raise ValueError("Paper1 adapter requires arrival_soc observations")
+            if not (arrival or return_soc):
+                raise ValueError("Paper1 adapter requires arrival_soc or current_soc_return_soc observations")
             from .transfer import Paper1Actor
-            self.actor = Paper1Actor(fleet, cfg["transfer_actor_hidden"]).to(device)
+            self.actor = Paper1Actor(fleet, cfg["transfer_actor_hidden"], include_return_soc=return_soc, include_own_return_soc=own_return).to(device)
         elif architecture == "default":
-            self.actor = mlp(2 * fleet + (6 if arrival else 7), cfg["hidden"], 1).to(device)
+            self.actor = mlp(2 * fleet + (6 if arrival or return_soc else 7) + (fleet if return_soc else 0), cfg["hidden"], 1).to(device)
         else:
             raise ValueError("unknown actor_architecture")
-        critic_dim = (5 if arrival else 6) * fleet + 2
+        critic_dim = (5 if arrival or return_soc else 6) * fleet + 2 + (fleet if return_soc else 0)
         hidden = cfg["hidden"]
         if self.paper1_ppo:
             self.critic = torch.nn.Sequential(
@@ -129,6 +135,13 @@ class MAPPO:
         else:
             adv = (adv - adv.mean()) / max(float(adv.std()), 1e-8)
             adv, returns = to_tensor(adv), to_tensor(returns)
+        credit_enabled = cfg.get("credit_diagnostics", False)
+        if credit_enabled:
+            # Pure distribution queries: no samples, gradients or RNG changes.
+            raw_adv, raw_targets = gae(rewards, values, dones, last_value, cfg["gamma"], cfg["gae_lambda"])
+            with torch.no_grad():
+                probabilities = self._distribution(actors).probs
+                charge_before = (probabilities[..., 0] if self.paper1_ppo else probabilities).cpu().numpy()
         actor_grad_norm = cfg.get("max_grad_norm_actor", cfg["max_grad_norm"])
         critic_grad_norm = cfg.get("max_grad_norm_critic", cfg["max_grad_norm"])
         value_coef = cfg.get("value_coef", 0.5)
@@ -163,12 +176,26 @@ class MAPPO:
                                float(policy_loss.detach()), float(entropy.detach()),
                                float(approx_kl), float(clipfrac)))
         means = np.mean(result, axis=0)
-        return {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result), "mappo_entropy_coef": entropy_coef,
+        metrics = {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result), "mappo_entropy_coef": entropy_coef,
                 "mappo_policy_loss": float(means[2]), "mappo_entropy": float(means[3]),
                 "mappo_weighted_entropy": entropy_coef * float(means[3]),
                 "mappo_approx_kl": float(means[4]), "mappo_clipfrac": float(means[5]),
                 "mappo_value_target_mean": float(returns.mean()),
                 "mappo_value_prediction_mean": float(old_values.mean())}
+        if credit_enabled:
+            with torch.no_grad():
+                probabilities = self._distribution(actors).probs
+                charge_after = (probabilities[..., 0] if self.paper1_ppo else probabilities).cpu().numpy()
+            metrics["mappo_credit_trace"] = [dict(
+                upper_steps=row.get("upper_steps"), reward=float(rewards[index]), done=bool(row["done"]),
+                value=float(old_values[index]), value_target=float(raw_targets[index]),
+                advantage_raw=float(raw_adv[index]), advantage_normalized=float(adv[index]),
+                actions=row["action"].tolist(), battery_start=row.get("battery_start"),
+                assigned_status=row.get("assigned_status"), minimum_service_soc=row.get("minimum_service_soc"),
+                failure_records=row.get("failure_records", []),
+                p_charge_before=charge_before[index].tolist(), p_charge_after=charge_after[index].tolist(),
+            ) for index, row in enumerate(rollout)]
+        return metrics
 
     def state_dict(self):
         return {name: getattr(self, name).state_dict() for name in ("actor", "critic", "actor_opt", "critic_opt")}

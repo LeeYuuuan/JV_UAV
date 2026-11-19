@@ -33,6 +33,9 @@ class LowFrameRunner:
 
     def run_frame(self, plan: FramePlan) -> LowFrameResult:
         steps = []
+        assessor = getattr(self, "failure_assessor", None)
+        if assessor is not None:
+            assessor.begin_frame(plan, self.scene)
         reason: str | None = None
         total = self.scene.low_steps_per_frame
         for index in range(total):
@@ -43,10 +46,19 @@ class LowFrameRunner:
 
             if result.dead_during_step.size:
                 reason = "battery_depleted_during_low_step"
+                if assessor is not None:
+                    result.failure_records = [assessor.assess(uid, reason, self.scene) for uid in result.dead_during_step]
 
             elif index == total - 1:
                 unsafe = self.scene.mark_unable_to_return_dead(self.energy_model)
-                self.low_env.apply_final_return_penalty(result, unsafe)
+                weights = None
+                if assessor is not None:
+                    result.failure_records = [assessor.assess(uid, "final_return_infeasible", self.scene) for uid in unsafe]
+                    weights = np.array([r["lower_weight"] for r in result.failure_records])
+                if weights is None:
+                    self.low_env.apply_final_return_penalty(result, unsafe)
+                else:
+                    self.low_env.apply_final_return_penalty(result, unsafe, lower_failure_weights=weights)
                 if unsafe.size:
                     reason = "cannot_return_to_airship"
 
@@ -61,4 +73,5 @@ class LowFrameRunner:
             completed_all_steps=completed,
             terminated=reason is not None,
             termination_reason=reason,
+            failure_records=[r for step in steps for r in step.failure_records],
         )

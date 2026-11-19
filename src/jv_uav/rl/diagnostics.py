@@ -34,6 +34,7 @@ class EpisodeDiagnostics:
         self.sensor_ids = set()
         self.outer_sensor_ids = set()
         self.probes = []
+        self.failure_events = []
         self.charging_counts = {}
         self.charging_frames = 0
         self.request_probability_sum = None
@@ -59,6 +60,7 @@ class EpisodeDiagnostics:
             self.charging_counts[key] = self.charging_counts.get(key, 0) + value
 
     def record(self, result, action, center, sensor_pos, *, warmup=False):
+        self.failure_events.extend(copy.deepcopy(getattr(result, "failure_records", [])))
         self.return_sum += float(result.reward)
         self.discounted_return += self.gamma ** self.steps * float(result.reward)
         self.steps += 1
@@ -94,7 +96,10 @@ class EpisodeDiagnostics:
                          sigma_max=max(x['sigma_max'] for x in self.probes),
                          sampled_observations=len(self.probes))
         complete = self.steps == episode_steps
-        return dict(lower_diagnostics_complete=complete, lower_recorded_steps=self.steps,
+        return dict(failure_events=copy.deepcopy(self.failure_events),
+            failure_upper_weight_sum=sum(r["upper_weight"] for r in self.failure_events),
+            failure_lower_weight_sum=sum(r["lower_weight"] for r in self.failure_events),
+            lower_diagnostics_complete=complete, lower_recorded_steps=self.steps,
             charging_counts=dict(self.charging_counts), charging_recorded_frames=self.charging_frames,
             lower_return=self.return_sum if complete else None,
             lower_mean_reward=self.return_sum / max(self.steps, 1) if complete else None,
