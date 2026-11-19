@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 
 from jv_uav.low_env import LowReward
+from jv_uav.upper_env import UpperEnv
 from jv_uav.types import FramePlan, UAVStatus
 
 
@@ -75,3 +76,52 @@ class TopKReward:
             "return_distance": old["return_distance"],
         }
         return float(sum(terms.values())), terms
+
+
+class FailureTailEnv(UpperEnv):
+    """Settle the last lower transition before exposing it to replay."""
+
+    def __init__(self, env, gamma, scale, offset):
+        super().__init__(env.cfg, env.scene, env.scheduler, env.energy_model,
+                         env.low_runner, env.metrics)
+        self.failure_gamma = float(gamma)
+        self.failure_scale = float(scale)
+        self.failure_offset = float(offset)
+
+    def step(self, action):
+        callback = self.low_runner.on_step
+        deferred = []
+
+        def on_step(obs, low_action, result):
+            failed = result.dead_during_step.size or result.return_unsafe_ids.size
+            last = result.step_in_frame == self.scene.low_steps_per_frame - 1
+            if failed or last:
+                deferred.append((obs, low_action, result))
+            elif callback is not None:
+                callback(obs, low_action, result)
+
+        self.low_runner.on_step = on_step
+        try:
+            transition = super().step(action)
+        finally:
+            self.low_runner.on_step = callback
+        _, _, terminated, _, _ = transition
+        for obs, low_action, result in deferred:
+            if terminated:
+                if "terminal_future_backlog" in result.reward_terms:
+                    raise RuntimeError("Failure tail already applied.")
+                horizon = self.max_frames * self.scene.low_steps_per_frame
+                remaining = max(0, horizon - self.scene.low_step_total)
+                k = np.arange(1, remaining + 1, dtype=np.float64)
+                # All collection stops after failure. Use mean arrivals for the
+                # virtual remaining horizon, without consuming dynamics RNG.
+                future = (self.scene.sensor_backlog[:, None].astype(np.float64) +
+                          self.scene.arrival_rate[:, None] * self.scene.low_step_sec * k)
+                maxima = future.max(axis=0)
+                tail = np.sum(self.failure_gamma ** k *
+                              (self.failure_offset - maxima) / self.failure_scale)
+                result.reward_terms["terminal_future_backlog"] = float(tail)
+                result.reward = float(sum(result.reward_terms.values()))
+            if callback is not None:
+                callback(obs, low_action, result)
+        return transition

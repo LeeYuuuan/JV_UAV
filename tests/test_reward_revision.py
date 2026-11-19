@@ -219,9 +219,9 @@ def test_512_rollout_crosses_resets_without_resetting_at_update():
     trainer = JointTrainer(env, cfg)
     # Stationary service with recharge resets isolates rollout boundary behavior.
     trainer.env.low_runner.low_policy = lambda obs: np.zeros((len(obs['active_uav_ids']), 2), np.float32)
-    def stationary_upper(obs):
+    def stationary_upper(obs, **kwargs):
         probabilities = trainer.mappo.request_probabilities(obs)
-        return np.zeros(6, np.int8), np.log1p(-probabilities), trainer.mappo.value(obs)
+        return np.zeros(6, np.int8), np.log1p(-probabilities), trainer.mappo.value(obs), probabilities
     trainer.mappo.act = stationary_upper
     for frame in range(1, 513):
         trainer.env.scene.uav_battery.fill(1)

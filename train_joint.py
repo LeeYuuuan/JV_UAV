@@ -36,7 +36,7 @@ def format_progress(rows, elapsed, *, by_update=False, partial=False):
             f"train_serving_mean={serving:.2f} | avg_reward={reward:.2f} | "
             f"avg_max_backlog={backlog:.2f} | dead={deaths} | SAC={last['sac_updates']:07d} | "
             f"pi_loss={last.get('mappo_actor_loss', 0):.4f} | "
-            f"vf_loss={last.get('mappo_value_loss', 0):.4f} | elapsed={elapsed / 60:.1f}m"
+            f"vf_loss={last.get('mappo_value_loss', 0):.4f} | phase={last['phase']} | elapsed={elapsed / 60:.1f}m"
         )
     return (
         f"frame {last['upper_steps']:07d} | ep {last['episodes']:05d} | "
@@ -50,7 +50,7 @@ def format_progress(rows, elapsed, *, by_update=False, partial=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-config", type=Path, default=ROOT / "configs/default.yaml")
-    parser.add_argument("--train-config", type=Path, default=ROOT / "configs/training.yaml")
+    parser.add_argument("--train-config", type=Path, default=ROOT / "configs/training_joint_topk.yaml")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-note", default="", help="Short experiment description saved with source and effective configuration.")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
@@ -98,7 +98,9 @@ def main():
             parser.error("Environment UAV count does not match transfer_fleet")
         if args.smoke:
             env_cfg["time"]["episode_upper_frames"] = 3
-            cfg.update(total_upper_steps=6, upper_rollout_steps=2, checkpoint_every_mappo=1, evaluate_every_mappo=0, evaluation_seeds=[1001])
+            cfg.update(total_upper_steps=6, upper_rollout_steps=2, checkpoint_every_mappo=1, evaluate_every_mappo=0, evaluate_every_frames=2, full_evaluate_every_frames=4, eval_render_every_frames=0, checkpoint_every_frames=2, evaluation_seeds=[1001])
+            if cfg.get("update_schedule", {}).get("mode") == "staged":
+                cfg["update_schedule"]["switch_after_sac_updates"] = 2
             cfg["sac"].update(hidden=32, heads=2, layers=1, batch_size=8, replay_capacity=256, random_steps=0, learning_starts=0)
             cfg["mappo"].update(hidden=32, epochs=2, minibatch_frames=2)
         transfer_state = None
@@ -139,17 +141,33 @@ def main():
     (output / "resolved_config.json").write_text(json.dumps({"environment": trainer.env_cfg, "training": cfg, "device": device}, indent=2), encoding="utf-8")
     record_run(ROOT, output, trainer, args)
 
-    def evaluate(label):
+    for key in ("evaluate_every_frames", "full_evaluate_every_frames", "eval_render_every_frames", "checkpoint_every_frames"):
+        if type(cfg.get(key, 0)) is not int or cfg.get(key, 0) < 0:
+            parser.error(f"{key} must be a nonnegative integer")
+
+    def evaluate(label, full=True, render=True):
         summaries = []
-        for seed in cfg["evaluation_seeds"]:
-            summaries.append(trainer.evaluate(seed, output / label / f"seed_{seed}"))
+        seeds = cfg["evaluation_seeds"] if full else cfg["evaluation_seeds"][:1]
+        for seed in seeds:
+            # Frequent checks store scalar diagnostics; full checks preserve trajectories.
+            summaries.append(trainer.evaluate(seed, output / label / f"seed_{seed}" if full else None, render=render))
+        with (output / "eval.jsonl").open("a", encoding="utf-8") as stream:
+            for summary in summaries:
+                stream.write(json.dumps(dict(upper_steps=trainer.upper_steps,
+                    sac_updates=trainer.sac_updates, mappo_updates=trainer.mappo_updates,
+                    phase=trainer.training_phase(), full_evaluation=full, **summary), allow_nan=False) + "\n")
+            stream.flush()
+        (output / "latest_eval.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
+        from jv_uav.rl.eval_curves import save_evaluation_curves
+        save_evaluation_curves(output)
         for summary in summaries:
             print(
                 f"  eval update {trainer.mappo_updates:05d} | seed {summary['seed']} | "
                 f"return {summary['upper_return']:10.2f} | "
                 f"avg_max_backlog {summary['mean_max_backlog']:9.2f} | "
                 f"frames {summary['frames']:4d}/{summary['configured_frames']} | "
-                f"low_steps {summary['low_steps']:4d} | dead {len(summary['dead_ids']):2d} | "
+                f"low_steps {summary['low_steps']:4d} | lower_return {summary['lower_return']:.1f} | "
+                f"coverage {summary['sensor_coverage_fraction']:.1%} | dead {len(summary['dead_ids']):2d} | "
                 f"charge requests/assigned {summary['charge_requests']}/{summary['charging_assignments']} | "
                 f"stop {summary['termination_reason']}",
                 flush=True,
@@ -173,6 +191,10 @@ def main():
                 charge_log.write(json.dumps(dict(upper_steps=row['upper_steps'],
                     episode=trainer.episodes if trainer.episode_over else trainer.episodes + 1,
                     request_probabilities=row["request_probabilities"],
+                    frame_in_episode=trainer.env.scene.upper_step,
+                    battery_start=row["battery_start"], battery_end=row["battery_end"],
+                    assigned_status=row["assigned_status"], lower_reward=row["lower_reward"],
+                    lower_reward_terms=row["lower_reward_terms"], phase=row["phase"],
                     **row['charging_diagnostics']), separators=(',', ':')) + '\n')
                 charge_log.flush()  # Persist every completed frame, independently of console output.
                 if (row['upper_steps'] % disk_log_every == 0 or row['terminated']
@@ -191,9 +213,13 @@ def main():
                     summary = dict(episode=row['episodes'], upper_steps=row['upper_steps'],
                                    upper_return=row['episode_return'], termination_reason=row['termination_reason'],
                                    **row['episode_metrics'])
-                    with gzip.open(temporary, 'wt', encoding='utf-8') as stream:
-                        json.dump(summary, stream, allow_nan=False)
-                    temporary.replace(path)
+                    if cfg.get("compact_episode_logs", False):
+                        with gzip.open(output / "episodes.jsonl.gz", "at", encoding="utf-8", compresslevel=5) as stream:
+                            stream.write(json.dumps(summary, allow_nan=False, separators=(',', ':')) + "\n")
+                    else:
+                        with gzip.open(temporary, 'wt', encoding='utf-8') as stream:
+                            json.dump(summary, stream, allow_nan=False)
+                        temporary.replace(path)
                 if curves is not None:
                     curves.add(row)
                     if (step_index + 1) % plot_every == 0:
@@ -203,13 +229,21 @@ def main():
                 if report:
                     print(format_progress(console_rows, monotonic() - started, by_update=by_update), flush=True)
                     console_rows.clear()
-                if row["mappo_updated"] and step_index < steps - 1:
-                    interval = cfg["checkpoint_every_mappo"]
-                    if interval and trainer.mappo_updates % interval == 0:
-                        trainer.save(output / "checkpoint.pt")
-                    interval = cfg["evaluate_every_mappo"]
-                    if interval and trainer.mappo_updates % interval == 0:
-                        evaluate(f"eval_{trainer.upper_steps:08d}")
+                frame = trainer.upper_steps
+                checkpoint_frames = cfg.get("checkpoint_every_frames", 0)
+                checkpoint_updates = cfg["checkpoint_every_mappo"]
+                if ((checkpoint_frames and frame % checkpoint_frames == 0) or
+                        (row["mappo_updated"] and checkpoint_updates and trainer.mappo_updates % checkpoint_updates == 0)):
+                    trainer.save(output / "checkpoint.pt")
+                quick = cfg.get("evaluate_every_frames", 0)
+                full_interval = cfg.get("full_evaluate_every_frames", 0)
+                full_due = bool(full_interval and frame % full_interval == 0)
+                update_interval = cfg["evaluate_every_mappo"]
+                update_due = bool(row["mappo_updated"] and update_interval and trainer.mappo_updates % update_interval == 0)
+                if step_index < steps - 1 and (full_due or update_due or (quick and frame % quick == 0)):
+                    render_interval = cfg.get("eval_render_every_frames", 0)
+                    render_due = bool(render_interval and frame % render_interval == 0)
+                    evaluate(f"eval_{frame:08d}", full=full_due or update_due, render=render_due)
     except KeyboardInterrupt:
         # A physical frame may be incomplete. Keep the previous safe checkpoint
         # rather than saving inconsistent policy/rollout state mid-step.

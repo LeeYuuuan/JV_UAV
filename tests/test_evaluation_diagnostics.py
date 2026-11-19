@@ -14,11 +14,11 @@ def test_evaluation_records_1000_steps_and_full_trails_with_feasible_charging():
     env['time']['episode_upper_frames'] = 100
     trainer = JointTrainer(env, cfg)
 
-    def rotate(obs, deterministic=False):
+    def rotate(obs, deterministic=False, **kwargs):
         action = np.zeros(6, np.int8)
         soc = obs['actor'][0, :6]
         action[np.lexsort((np.arange(6), soc))[:4]] = 1
-        return action, np.zeros(6), 0.0
+        return action, np.zeros(6), 0.0, action.astype(float)
 
     trainer.mappo.act = rotate
     trainer.sac.act = lambda obs, rms, deterministic=False: np.zeros((len(obs['active_uav_ids']), 2), np.float32)
@@ -38,7 +38,7 @@ def test_evaluation_reports_early_battery_death_without_extending_episode():
     env, cfg = trainer_config()
     env['time']['episode_upper_frames'] = 100
     trainer = JointTrainer(env, cfg)
-    trainer.mappo.act = lambda obs, deterministic=False: (np.zeros(6, np.int8), np.zeros(6), 0.0)
+    trainer.mappo.act = lambda obs, deterministic=False, **kwargs: (np.zeros(6, np.int8), np.zeros(6), 0.0, np.zeros(6))
     trainer.sac.act = lambda obs, rms, deterministic=False: np.zeros((len(obs['active_uav_ids']), 2), np.float32)
     result = trainer.evaluate(1001, render=False)
     assert result['configured_low_steps'] == 1000 and result['low_steps'] == 24

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ..factory import build_smoke_test_runner
+from .training_env import build_training_env
 from .mappo import MAPPO
 from .observations import RunningMeanStd, copy_lower, upper_observation
 from .replay import Replay
@@ -25,6 +25,13 @@ def validate_training(cfg):
     interval = cfg.get("diagnostics_every_low_steps", 100)
     if not isinstance(interval, int) or isinstance(interval, bool) or interval < 0:
         raise ValueError("diagnostics_every_low_steps must be a nonnegative integer")
+    schedule = cfg.get("update_schedule", {})
+    if schedule.get("mode", "constant") not in {"constant", "staged"}:
+        raise ValueError("update_schedule.mode must be constant or staged")
+    if schedule.get("mode") == "staged":
+        for key in ("switch_after_sac_updates", "late_sac_updates_per_mappo"):
+            if type(schedule.get(key)) is not int or schedule[key] <= 0:
+                raise ValueError(f"update_schedule.{key} must be a positive integer")
     sac, ppo = cfg["sac"], cfg["mappo"]
     if sac.get("warmup_mode", "uniform") not in {"uniform", "waypoint"}:
         raise ValueError("warmup_mode must be uniform or waypoint")
@@ -59,8 +66,7 @@ def validate_training(cfg):
 class JointTrainer:
     def __init__(self, env_cfg, cfg, device="cpu"):
         cfg = copy.deepcopy(cfg)
-        # Old checkpoints keep their reward/replay data, but never restore the
-        # removed frequency switch. Their former early rate remains constant.
+        # Preserve legacy checkpoints; a new staged schedule is explicitly opt-in.
         cfg.setdefault("sac_updates_per_step", cfg.get("early_sac_updates_per_step", 1))
         for key in ("switch_after_sac_updates", "early_sac_updates_per_step", "late_sac_updates_per_mappo"):
             cfg.pop(key, None)
@@ -69,7 +75,7 @@ class JointTrainer:
         self.device = torch.device(device)
         torch.manual_seed(cfg["seed"])
         self.rng = np.random.default_rng(cfg["seed"])
-        self.env = build_smoke_test_runner(self.env_cfg).upper_env
+        self.env = build_training_env(self.env_cfg, cfg)
         self.env.reset()
         self.exploration = WaypointExploration(
             self.env.scene, self.rng, cfg["sac"].get("warmup_random_fraction", 0.2),
@@ -99,8 +105,17 @@ class JointTrainer:
         self.sac_updates += 1
         return True
 
+    def training_phase(self):
+        schedule = self.cfg.get("update_schedule", {})
+        if schedule.get("mode") != "staged":
+            return "joint"
+        return ("joint_dense_lower" if self.sac_updates < schedule["switch_after_sac_updates"]
+                else "joint_matched_updates")
+
     def _transition_updates(self):
         for _ in range(self.cfg["sac_updates_per_step"]):
+            if self.training_phase() == "joint_matched_updates":
+                break
             self._sac_update()
 
     def _finish_pending(self, next_obs, done):
@@ -141,6 +156,8 @@ class JointTrainer:
             self._transition_updates()
 
     def step(self):
+        phase_before = self.training_phase()
+        sac_before = self.sac_updates
         if self.episode_over:
             self.env.reset(reset_rng=False)
             self.exploration.reset()
@@ -169,6 +186,10 @@ class JointTrainer:
             self.rollout.clear()
             self.mappo_updates += 1
             updated = True
+            # Do not double-update on the frame that reaches the dense threshold.
+            if phase_before == "joint_matched_updates":
+                for _ in range(self.cfg["update_schedule"]["late_sac_updates_per_mappo"]):
+                    self._sac_update()
         episode_metrics = None
         if done:
             backlog = np.asarray(self.env.trace.backlog_max_post_timeline[1:])
@@ -184,7 +205,8 @@ class JointTrainer:
         return {
             "upper_steps": self.upper_steps, "low_steps": self.low_steps,
             "sac_updates": self.sac_updates, "mappo_updates": self.mappo_updates,
-            "phase": "joint", "episodes": self.episodes,
+            "phase": self.training_phase(), "episodes": self.episodes,
+            "sac_updates_this_frame": self.sac_updates - sac_before,
             "upper_reward": reward, "episode_return": self.episode_return,
             "episode_metrics": episode_metrics,
             "terminated": bool(terminated), "truncated": bool(truncated),
@@ -194,6 +216,13 @@ class JointTrainer:
             "system_max_backlog": float(self.env.scene.sensor_backlog.max()),
             "serving_count": info["serving_count_during_frame"],
             "frame_low_steps": len(info["low_frame"].steps),
+            "lower_reward": float(sum(s.reward for s in info["low_frame"].steps)),
+            "lower_reward_terms": {key: float(sum(s.reward_terms.get(key, 0) for s in info["low_frame"].steps))
+                                   for key in {k for s in info["low_frame"].steps for k in s.reward_terms}},
+            "sensor_coverage_fraction": float(np.mean(self.env.trace.sensor_visit_count > 0)),
+            "battery_start": info["frame_plan"].frame_start_battery.tolist(),
+            "battery_end": self.env.scene.uav_battery.tolist(),
+            "assigned_status": info["frame_plan"].assigned_status.tolist(),
             "termination_reason": self.env.trace.frames[-1].termination_reason,
             "request_probabilities": probabilities.tolist(),
             "charge_requests": int(info["frame_plan"].requested_charge.sum()),
@@ -210,11 +239,14 @@ class JointTrainer:
         # training RNG or replay; model and optimizer states are unchanged.
         cfg = copy.deepcopy(self.env_cfg)
         cfg["seeds"]["dynamics_seed"] = int(seed)
-        env = build_smoke_test_runner(cfg).upper_env
+        env = build_training_env(cfg, self.cfg)
         env.reset()
         frozen_rms = copy.deepcopy(self.rms)
         frozen_rms.training = False
         env.low_runner.low_policy = lambda obs: self.sac.act(obs, frozen_rms, deterministic=True)
+        evaluation_diagnostics = EpisodeDiagnostics(self.cfg["sac"]["gamma"])
+        env.low_runner.on_step = lambda obs, action, result: evaluation_diagnostics.record(
+            result, action, env.scene.airship_pos, env.scene.sensor_pos)
         total_return = 0.0
         policy_trace = []
         charge_added = np.zeros(env.scene.num_uavs, dtype=np.float64)
@@ -243,6 +275,7 @@ class JointTrainer:
             if terminated or truncated:
                 break
         summary = {"seed": seed, "upper_return": total_return, "low_steps": env.scene.low_step_total, "frames": len(env.trace.frames), "dead_ids": env.scene.dead_ids().tolist(), "mean_max_backlog": float(np.mean(env.trace.backlog_max_post_timeline[1:])), "terminated": bool(terminated), "truncated": bool(truncated)}
+        summary.update(evaluation_diagnostics.summary(env.scene.low_step_total))
         summary.update(
             charging_counts={key: sum(row['charging_diagnostics']['counts'][key] for row in policy_trace)
                              for key in policy_trace[0]['charging_diagnostics']['counts']},
@@ -309,7 +342,7 @@ class JointTrainer:
         saved_reward = state["env_cfg"]["reward"]
         if trainer.mappo.observation_mode != "arrival_soc":
             warnings.warn("This checkpoint retains the legacy upper current-SOC/return-time inputs. Start a fresh run for arrival-SOC inputs.", UserWarning)
-        if (saved_reward.get("upper_reward_mode", "serving_backlog") != "lower_data_mean"
+        if trainer.cfg.get("lower_reward") is None and (saved_reward.get("upper_reward_mode", "serving_backlog") != "lower_data_mean"
                 or saved_reward.get("upper_backlog_scale_packets") != 2000.0
                 or saved_reward.get("upper_backlog_cap") is not None
                 or saved_reward.get("low_collection_mode") != "covered_pnorm"

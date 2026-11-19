@@ -108,7 +108,7 @@ def test_frame_boundary_waits_for_next_charging_allocation():
     cfg['upper_rollout_steps'] = 100
     trainer = JointTrainer(env, cfg)
     actions = iter([np.array([1,1,0,0,0,0]), np.array([0,0,1,1,0,0])])
-    trainer.mappo.act = lambda obs: (next(actions), np.zeros(6), 0.0)
+    trainer.mappo.act = lambda obs, **kwargs: (next(actions), np.zeros(6), 0.0, np.full(6, .5))
     trainer.step()
     assert trainer.pending is not None and len(trainer.replay) == 9
     old_state = trainer.pending[0]['active_uav_features'].copy()
@@ -127,7 +127,7 @@ def test_horizon_and_return_death_never_bootstrap():
         cfg['sac']['learning_starts'] = 99999
         trainer = JointTrainer(env, cfg)
         trainer.env.scene.uav_battery.fill(battery)
-        trainer.mappo.act = lambda obs: (np.zeros(6, np.int8), np.zeros(6), 0.0)
+        trainer.mappo.act = lambda obs, **kwargs: (np.zeros(6, np.int8), np.zeros(6), 0.0, np.full(6, .5))
         # Fixed zero actions make the exact return-failure energy case deterministic.
         trainer.sac.act = lambda obs, rms: np.zeros((len(obs['active_uav_ids']),2),np.float32)
         row = trainer.step()

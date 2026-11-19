@@ -25,7 +25,7 @@ from jv_uav.rl.replay import Replay
 from jv_uav.rl.observations import RunningMeanStd
 from jv_uav.rl.exploration import WaypointExploration
 from jv_uav.rl.diagnostics import EpisodeDiagnostics
-from fixed_env import FixedScheduler, TopKReward
+from fixed_env import FixedScheduler, TopKReward, FailureTailEnv
 
 
 def write_json(path, data):
@@ -67,8 +67,11 @@ class LowerTrainer(JointTrainer):
         env = build_smoke_test_runner(env_cfg).upper_env
         env.scheduler = FixedScheduler(env_cfg, env.energy_model, self.schedule["assigned_status"])
         if self.reward_cfg["mode"] == "topk":
-            values = {k: v for k, v in self.reward_cfg.items() if k != "mode"}
+            values = {k: v for k, v in self.reward_cfg.items() if k not in ("mode", "terminal_tail")}
             env.low_runner.low_env.reward_model = TopKReward(env_cfg, **values)
+            if self.reward_cfg.get("terminal_tail", False):
+                env = FailureTailEnv(env, self.cfg["sac"]["gamma"],
+                                     self.reward_cfg["scale"], self.reward_cfg["offset"])
         return env
 
     def step(self):
@@ -214,11 +217,13 @@ def main():
     parser.add_argument("--device", choices=("cpu","cuda"), default="cuda")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--reward", choices=("topk","legacy"), default="topk")
+    parser.add_argument("--no-terminal-tail", action="store_true",
+                        help="Disable virtual remaining-horizon costs for a fresh top-K run")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--rho", type=float, default=.5)
     parser.add_argument("--backlog-scale", type=float, default=300.)
     parser.add_argument("--offset", type=float, default=0.)
-    parser.add_argument("--eval-every", type=int, default=1000)
+    parser.add_argument("--eval-every", type=int, default=100, help="Evaluate every N upper frames (10 lower steps per complete frame)")
     parser.add_argument("--save-every", type=int, default=1000)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--smoke", action="store_true")
@@ -240,7 +245,8 @@ def main():
         cfg=yaml.safe_load((PROJECT/"configs/training_transfer_n6.yaml").read_text(encoding="utf-8"))
         cfg["seed"]=args.seed
         schedule=json.loads((HERE/"schedule.json").read_text(encoding="utf-8"))
-        reward=dict(mode=args.reward,k=args.top_k,rho=args.rho,scale=args.backlog_scale,offset=args.offset)
+        reward=dict(mode=args.reward,k=args.top_k,rho=args.rho,scale=args.backlog_scale,
+                    offset=args.offset,terminal_tail=not args.no_terminal_tail and args.reward=="topk")
         if args.smoke:
             cfg["sac"].update(hidden=32,heads=2,layers=1,batch_size=8,replay_capacity=128,
                               random_steps=0,learning_starts=0)
@@ -251,7 +257,7 @@ def main():
             for f in sorted((PROJECT/"src").rglob("*.py"))}
     hashes.update({f.name:hashlib.sha256(f.read_bytes()).hexdigest()
                    for f in (HERE/"train.py",HERE/"fixed_env.py",HERE/"schedule.json")})
-    write_json(output/"resolved_config.json",dict(version="lower_fixed_schedule_v1",
+    write_json(output/"resolved_config.json",dict(version="lower_fixed_schedule_terminal_tail_v2",
         environment=trainer.env_cfg,training=trainer.cfg,schedule=trainer.schedule,
         lower_reward=trainer.reward_cfg,device=args.device,source_sha256=hashes))
     def evaluate():
@@ -294,3 +300,4 @@ def main():
 
 if __name__=="__main__":
     main()
+

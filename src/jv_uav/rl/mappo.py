@@ -142,7 +142,9 @@ class MAPPO:
                 ratio = log_ratio.exp()
                 unclipped = ratio * adv[ids, None]
                 clipped = ratio.clamp(1 - cfg["clip"], 1 + cfg["clip"]) * adv[ids, None]
-                actor_loss = -torch.minimum(unclipped, clipped).mean() - entropy_coef * dist.entropy().mean()
+                policy_loss = -torch.minimum(unclipped, clipped).mean()
+                entropy = dist.entropy().mean()
+                actor_loss = policy_loss - entropy_coef * entropy
                 backward_step(actor_loss, self.actor_opt, self.actor.parameters(), actor_grad_norm)
                 value = self.critic(critics[ids]).squeeze(-1)
                 if cfg.get("value_clip") is None:
@@ -154,9 +156,19 @@ class MAPPO:
                 scaled_value_loss = value_coef * value_loss
                 backward_step(scaled_value_loss, self.critic_opt, self.critic.parameters(), critic_grad_norm)
                 logged_value_loss = value_loss if self.paper1_ppo else scaled_value_loss
-                result.append((float(actor_loss.detach()), float(logged_value_loss.detach())))
+                with torch.no_grad():
+                    approx_kl = ((ratio - 1) - log_ratio).mean()
+                    clipfrac = ((ratio - 1).abs() > cfg["clip"]).float().mean()
+                result.append((float(actor_loss.detach()), float(logged_value_loss.detach()),
+                               float(policy_loss.detach()), float(entropy.detach()),
+                               float(approx_kl), float(clipfrac)))
         means = np.mean(result, axis=0)
-        return {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result), "mappo_entropy_coef": entropy_coef}
+        return {"mappo_actor_loss": float(means[0]), "mappo_value_loss": float(means[1]), "mappo_minibatches": len(result), "mappo_entropy_coef": entropy_coef,
+                "mappo_policy_loss": float(means[2]), "mappo_entropy": float(means[3]),
+                "mappo_weighted_entropy": entropy_coef * float(means[3]),
+                "mappo_approx_kl": float(means[4]), "mappo_clipfrac": float(means[5]),
+                "mappo_value_target_mean": float(returns.mean()),
+                "mappo_value_prediction_mean": float(old_values.mean())}
 
     def state_dict(self):
         return {name: getattr(self, name).state_dict() for name in ("actor", "critic", "actor_opt", "critic_opt")}

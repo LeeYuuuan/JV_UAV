@@ -88,7 +88,12 @@ class SAC:
         with torch.no_grad():
             for target_param, source in zip(self.target.parameters(), self.critic.parameters()):
                 target_param.lerp_(source, cfg["tau"])
-        return {"sac_actor_loss": float(actor_loss.detach()), "sac_critic_loss": float(critic_loss.detach()), "sac_alpha": float(self.log_alpha.exp().detach())}
+        return {"sac_actor_loss": float(actor_loss.detach()), "sac_critic_loss": float(critic_loss.detach()), "sac_alpha": float(self.log_alpha.exp().detach()),
+                "sac_q_mean": float(((q1.detach()+q2.detach())/2).mean()),
+                "sac_target_mean": float(target.mean()),
+                "sac_policy_q_mean": float(torch.minimum(qa, qb).detach().mean()),
+                "sac_entropy_loss": float((alpha * logp.detach()).mean()),
+                "sac_alpha_loss": float(alpha_loss.detach())}
 
     def state_dict(self):
         return {name: getattr(self, name).state_dict() for name in ("actor", "critic", "target", "actor_opt", "critic_opt", "alpha_opt")} | {"log_alpha": self.log_alpha.detach().cpu()}

@@ -118,8 +118,9 @@ class TrainingCurves:
             ('lower_collected_packets', 'Actual packets collected', 'Packets / episode'),
         ]
         labels = dict(covered_pnorm='Covered union p-norm (+)', collected_packets='Collected packets (+)', covered_max_sum='Legacy owned maxima (+)', system_max_post_service='Backlog (-)',
-                      oob='Boundary (-)', return_failure='Return failure (-)', return_distance='Return distance (-)')
-        colors = ['#3b9672', '#76a18b', '#9063bd', '#e19b26', '#d45e6b', '#327aa0']
+                      oob='Boundary (-)', return_failure='Return failure (-)', return_distance='Return distance (-)', topk_clear='Top-K collection (+)',
+                      terminal_future_backlog='Failure future backlog (-)', offset='Offset')
+        colors = ['#3b9672', '#76a18b', '#9063bd', '#e19b26', '#d45e6b', '#327aa0', '#9b59b6', '#16a085', '#c0392b', '#777777']
         for ax, (key, title, ylabel) in zip(axes.flat, panels):
             valid = [r for r in rows if r.get('lower_diagnostics_complete') and r.get(key) is not None]
             ax.set(title=title, xlabel='Completed episode', ylabel=ylabel)

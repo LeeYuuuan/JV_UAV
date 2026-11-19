@@ -14,7 +14,7 @@ def test_curves_use_all_episode_low_steps_excluding_cold_start():
     env, cfg = trainer_config()
     env['time']['episode_upper_frames'] = 1
     trainer = JointTrainer(env, cfg)
-    trainer.mappo.act = lambda obs: (np.zeros(6, np.int8), np.zeros(6), 0.0)
+    trainer.mappo.act = lambda obs, **kwargs: (np.zeros(6, np.int8), np.zeros(6), 0.0, np.zeros(6))
     row = trainer.step()
     values = trainer.env.trace.backlog_max_post_timeline[1:]
     assert row['episode_metrics']['mean_max_backlog'] == np.mean(values)

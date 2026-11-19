@@ -20,9 +20,23 @@ This uses the physical schedule above. Early deaths are expected with the curren
 
 Default data reward is (-B_after + 0.5*B_after*h_5)/300. K=5, rho=0.5, offset=0 and scale=300 are CLI parameters. They replace the old p-norm and quadratic backlog components. Existing boundary and final-return penalties remain. Lower observations, SAC, normalization, replay and waypoint warmup reuse JV code. There is no upper actor, critic or optimizer.
 
-train.jsonl logs every ten frames and episode ends. episodes.jsonl logs completed episodes. live_status.json and training_curves.png are overwritten. Evaluation saves summary.json, trace.json, dashboard.png and heatmaps.png every 1000 frames.
+train.jsonl logs every ten frames and episode ends. episodes.jsonl logs completed episodes. live_status.json and training_curves.png are overwritten. Evaluation saves summary.json, trace.json, dashboard.png and heatmaps.png every 100 upper frames (1000 lower steps when frames complete).
 
 checkpoint.pt saves SAC, optimizers, replay, normalizer, exploration, pending transition, environment and RNG state. Resume with --resume PATH --frames NEW_TOTAL in the original output directory. Frames denotes cumulative upper frames.
 
 Agent tests belong under UAV_Joint_Simulation/agent_tests. User runs belong under UAV_Joint_Simulation/user_runs.
 
+
+
+
+## Terminal future backlog cost
+
+Fresh top-K runs add the discounted remaining-horizon data cost exactly once on any physical failure, including mid-step battery exhaustion, final-return failure and non-serving return settlement failure. The actual episode and physics still stop immediately.
+
+The virtual future assumes no further collection and deterministic mean arrivals for each sensor. It uses the current full backlog vector and the lower SAC gamma. Future top-K bonus and future control penalties are zero. Future offset is retained. This is an explicit failure convention, not an exact estimate of the expected stochastic maximum.
+
+For remaining steps k=1..H, the terminal addition is sum(gamma**k * (offset - max_i(B_i + arrival_rate_i * low_step_sec * k)) / scale). Successful horizon completion adds zero. Replay and lower diagnostics receive the adjusted final transition before training.
+
+Logs include terminal_future_backlog under lower reward components. No schedule-phase input was added. Existing checkpoints preserve their old reward semantics; start a fresh run to enable this reward because existing replay contains old terminal labels. Use --no-terminal-tail for a fresh-run ablation.
+
+The source average service power was 282.7 W, with 257 W horizontal and 326 W hover applied over whole lower steps. JV limits movement to 30 out of 60 seconds per step, giving minimum service average power 291.5 W. Source energy is 0.376933 SOC/frame, JV minimum 0.388667. An optimistic per-UAV audit, ignoring all return cost and using full charging, first exhausts U4/U5 at frame 20. It does not exhaust every UAV at frame 20.
