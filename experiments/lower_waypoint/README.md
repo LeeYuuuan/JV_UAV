@@ -127,6 +127,10 @@ python3 experiments/lower_waypoint/train.py --device cpu --smoke --output ./outp
 - `episodes.jsonl.gz`: every completed episode, flushed immediately. Full training
   trajectories saved every100 episodes under `episodes/`.
 - `eval.jsonl`: every1000 decisions, all3 seeds1001/1002/1003. Deterministic policy.
+  EVERY evaluation saves `eval_XXXXXXXX/seed_N/trajectory.png` and summary.json.
+  The trajectory image separates6 UAVs and includes ALL sorties and actual service
+  footprints in the episode, with waypoint color showing decision number. Partial
+  terminal travel is drawn only as executed. Return paths retrace outbound lines.
   Initial evaluation also includes uniform-map random, stay-home, and high-backlog
   greedy-reference baselines. These do not contribute training/replay samples.
 - Full8-hour evaluation paths/footprints and Gaussian parameters every5000
@@ -141,6 +145,16 @@ Package results while running with the existing utility (no weights in ZIP):
 ```bash
 python3 pack_results.py ./runs/lower_waypoint_sync_8h_v1
 ```
+
+Render the latest saved checkpoint without stopping the current training process:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python3 experiments/lower_waypoint/evaluate.py --device cuda --checkpoint ./runs/lower_waypoint_sync_8h_v1/checkpoint.pt --output ./runs/lower_waypoint_sync_8h_v1/eval_manual_latest
+```
+
+This writes per-seed trajectory.png, dashboard.png, summary.json and trace.json.
+It evaluates the saved weights, not unsaved in-memory updates. Existing running
+training processes must be restarted/resumed to use a changed automatic renderer.
 
 ## Comparison to the20/10 experiment
 

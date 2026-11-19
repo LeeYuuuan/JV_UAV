@@ -1,7 +1,7 @@
 {
   "revision": "lower_waypoint_sync_8h_v1",
   "date": "2026-11-19",
-  "passed": 19,
+  "passed": 20,
   "failed": 0,
   "tests": [
     {
@@ -78,6 +78,10 @@
     },
     {
       "test": "test_fixed_time_objective_prefers_collection_over_staying_home",
+      "status": "pass"
+    },
+    {
+      "test": "test_every_eval_saves_trajectory_even_without_detailed_trace",
       "status": "pass"
     }
   ]

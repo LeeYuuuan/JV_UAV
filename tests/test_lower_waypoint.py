@@ -339,6 +339,23 @@ def test_fixed_time_objective_prefers_collection_over_staying_home():
     assert collect["failures"] == home["failures"] == 0
 
 
+def test_every_eval_saves_trajectory_even_without_detailed_trace():
+    ec, cfg = tiny()
+    cfg["episode_sec"] = 1200.0
+    trainer = Trainer(ec, cfg)
+    rng_before = torch.get_rng_state().clone()
+    with tempfile.TemporaryDirectory() as directory:
+        light, full = Path(directory) / "light", Path(directory) / "full"
+        a = trainer.evaluate(1001, light, detailed=False)
+        b = trainer.evaluate(1001, full, detailed=True)
+        assert a == b
+        assert (light / "trajectory.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert (light / "summary.json").exists()
+        assert not (light / "trace.json").exists() and not (light / "dashboard.png").exists()
+        assert all((full / name).exists() for name in ("trajectory.png", "dashboard.png", "trace.json", "summary.json"))
+    assert torch.equal(rng_before, torch.get_rng_state())
+
+
 if __name__ == "__main__":
     torch.set_num_threads(1)
     results = []

@@ -6,6 +6,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+from matplotlib.collections import LineCollection, PatchCollection
+from matplotlib.colors import Normalize
+from matplotlib.lines import Line2D
 
 
 def write_json(path, data):
@@ -20,6 +23,53 @@ def save_figure(fig, path):
     temp = path.with_suffix(".tmp")
     fig.savefig(temp, format="png", dpi=140, bbox_inches="tight")
     plt.close(fig); temp.replace(path)
+
+
+def trajectories(env, path):
+    """All sorties, with true executed outbound and return geometry per UAV."""
+    s, rows = env.scene, env.records
+    fig, axes = plt.subplots(3, 2, figsize=(12, 14), layout="constrained")
+    norm = Normalize(1, max(len(rows), 2))
+    cmap = plt.get_cmap("viridis")
+    climb = env.energy.height_m / env.energy.climb_speed_mps
+    for uid, ax in enumerate(axes.flat):
+        outbound, returns, circles, values, return_values = [], [], [], [], []
+        targets, target_values = [], []
+        for row in rows:
+            for event in row["return_events"]:
+                if event["uid"] != uid:
+                    continue
+                position = np.asarray(event["position"])
+                outbound.append([s.airship_pos, position]); values.append(row["frame"])
+                targets.append(position); target_values.append(row["frame"])
+                if row["service_completed"] and event["service_survived"]:
+                    circles.append(Circle(position, env.env_cfg["uavs"]["coverage_radius_m"]))
+                distance = float(np.linalg.norm(position - s.airship_pos))
+                horizontal = max(0, event["return_executed_sec"] - climb)
+                fraction = min(1, horizontal * env.energy.horizontal_speed_mps / max(distance, 1e-12))
+                if fraction > 0:
+                    end = position + (s.airship_pos - position) * fraction
+                    returns.append([position, end]); return_values.append(row["frame"])
+        ax.add_collection(PatchCollection(circles, facecolor="#278c88", edgecolor="none", alpha=.07))
+        ax.add_collection(LineCollection(outbound, colors=cmap(norm(values)), linewidths=.85, alpha=.55))
+        ax.add_collection(LineCollection(returns, colors=cmap(norm(return_values)), linewidths=.65, linestyles="dashed", alpha=.65))
+        if targets:
+            ax.scatter(*np.asarray(targets).T, c=target_values, norm=norm, cmap=cmap, s=14, zorder=4)
+        ax.scatter(*s.sensor_pos.T, color="#4c5966", s=9, zorder=3)
+        ax.scatter(*s.airship_pos, c="#b3314b", marker="*", s=110, zorder=5)
+        ax.add_patch(Circle(s.airship_pos, env.env_cfg["sensors"]["partition_radius_m"], fill=False, ls="--", color="gray", lw=.8))
+        ax.set(xlim=(0, s.world_size), ylim=(0, s.world_size), aspect="equal",
+               title=f"U{uid} | {len(outbound)} sorties", xlabel="East / m", ylabel="North / m")
+        ax.grid(alpha=.15)
+    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=list(axes.flat), shrink=.6, label="Decision / sortie number")
+    fig.legend(handles=[Line2D([], [], color="#4c5966", marker="o", ls="", label="Sensor"),
+                        Line2D([], [], color="#278c88", lw=7, alpha=.3, label="Actual service footprint"),
+                        Line2D([], [], color="#405c85", label="Outbound"),
+                        Line2D([], [], color="#405c85", ls="--", label="Executed return (same route)")],
+               loc="outside lower center", ncol=2, fontsize=9)
+    fig.suptitle(f"All UAV trajectories | {s.now_sec/3600:g} simulated hours | {len(rows)} decisions\n"
+                 "Waypoints colored by time; partial terminal travel shown only as executed", fontsize=13)
+    save_figure(fig, path)
 
 
 def dashboard(env, path):

@@ -120,8 +120,8 @@ def main():
     def evaluate(full=False, baselines=False):
         summaries = []
         for seed in cfg["evaluation_seeds"]:
-            folder = output / f"eval_{trainer.steps:08d}" / f"seed_{seed}" if full else None
-            summaries.append(trainer.evaluate(seed, folder))
+            folder = output / f"eval_{trainer.steps:08d}" / f"seed_{seed}"
+            summaries.append(trainer.evaluate(seed, folder, detailed=full))
             if baselines:
                 summaries.append(trainer.evaluate(seed, output / "eval_00000000" / f"random_seed_{seed}", mode="random"))
                 for mode in ("center", "greedy_reference"):
@@ -134,6 +134,7 @@ def main():
         print("  eval | " + " | ".join(f"{r['policy_mode']} seed{r['seed']} cover={r['sensor_coverage_fraction']:.1%} "
               f"B_time={r['time_mean_max_backlog']:.1f} pkt/s={r['collection_rate_packets_sec']:.2f} fail={r['failures']}"
               for r in summaries), flush=True)
+        print(f"  trajectory plots: {output / f'eval_{trainer.steps:08d}'} / seed_* / trajectory.png", flush=True)
 
     target_steps = args.steps or cfg["total_steps"]
     print(f"Waypoint SAC | revision {cfg['revision']} | device {device} | additional decisions {target_steps} | "

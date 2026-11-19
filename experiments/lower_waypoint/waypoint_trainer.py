@@ -44,7 +44,7 @@ class Trainer:
         return row | dict(training_steps=self.steps, sac_updates=self.updates, episode=self.episodes if done else self.episodes + 1,
                           warmup=warmup, losses=self.last_losses, episode_summary=summary)
 
-    def evaluate(self, seed, output=None, mode="policy"):
+    def evaluate(self, seed, output=None, mode="policy", detailed=True):
         env = WaypointEnv(self.env_cfg, self.cfg, seed=seed)
         rng = np.random.default_rng(seed + 10000)
         probes = []
@@ -67,19 +67,21 @@ class Trainer:
                 action = np.asarray(points) / env.scene.world_size * 2 - 1
             elif mode == "policy":
                 action = self.sac.act(obs, deterministic=True)
-                if output is not None:
+                if output is not None and detailed:
                     probes.append(dict(frame=env.frames + 1, ids=obs["ids"].tolist(), **self.sac.diagnostics(obs)))
             else:
                 raise ValueError("unknown evaluation mode")
             env.step(action)
         summary = env.summary() | dict(seed=seed, training_steps=self.steps, sac_updates=self.updates, policy_mode=mode)
         if output is not None:
-            from waypoint_plots import dashboard, write_json
+            from waypoint_plots import dashboard, trajectories, write_json
             output = Path(output); output.mkdir(parents=True, exist_ok=True)
             write_json(output / "summary.json", summary)
-            write_json(output / "trace.json", dict(sensor_pos=env.scene.sensor_pos.tolist(),
-                       sensor_backlog=env.scene.sensor_backlog.tolist(), rows=env.records, action_distribution=probes))
-            dashboard(env, output / "dashboard.png")
+            trajectories(env, output / "trajectory.png")
+            if detailed:
+                write_json(output / "trace.json", dict(sensor_pos=env.scene.sensor_pos.tolist(),
+                           sensor_backlog=env.scene.sensor_backlog.tolist(), rows=env.records, action_distribution=probes))
+                dashboard(env, output / "dashboard.png")
         return summary
 
     def save(self, path):
