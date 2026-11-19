@@ -1,0 +1,37 @@
+revision: lower_waypoint_sync_8h_v1
+seed: 43
+total_steps: 100000
+episode_sec: 28800.0
+service_sec: 30.0
+integration_sec: 10.0
+active_count_min: 2
+active_count_max: 4
+observation_backlog_scale: 3000.0
+reward:
+  backlog_scale: 300.0
+  reference_sec: 60.0
+  top_k: 20
+  rho: 0.5
+  failure_weight: 500.0
+  failure_distance_weight: 500.0
+  distance_scale_m: 1800.0
+sac:
+  hidden: 128
+  heads: 4
+  lr: 0.0003
+  gamma_per_reference: 0.99
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  random_steps: 5000
+  learning_starts: 5000
+  max_grad_norm: 1.0
+eval_every: 1000
+full_eval_every: 5000
+save_every: 5000
+plot_every: 1000
+log_every_episodes: 20
+trace_every_steps: 10
+evaluation_seeds: [1001, 1002, 1003]
