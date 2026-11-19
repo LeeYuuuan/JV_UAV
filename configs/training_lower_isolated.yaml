@@ -1,0 +1,46 @@
+revision: lower_random20_10_real_energy_v1
+seed: 43
+total_low_steps: 200000
+eval_every: 1000
+full_eval_every: 5000
+save_every: 5000
+plot_every: 1000
+log_every_episodes: 50
+evaluation_seeds:
+- 1001
+- 1002
+- 1003
+normalization:
+  clip: 10.0
+  min_std_sec: 60.0
+sac:
+  include_uav_id: true
+  hidden: 128
+  heads: 4
+  layers: 2
+  lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  random_steps: 10000
+  warmup_mode: waypoint
+  warmup_random_fraction: 0.2
+  warmup_energy_guard: true
+  warmup_return_reserve_frac: 0.02
+  learning_starts: 10000
+  reward_scale: 1.0
+  max_grad_norm: 1.0
+lower_reward:
+  mode: topk
+  k: 20
+  rho: 0.5
+  scale: 300.0
+  offset: 0.0
+isolated:
+  long_steps: 20
+  short_steps: 10
+  selection_seed: 45
+  return_penalty: true
