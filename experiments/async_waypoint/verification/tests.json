@@ -1,0 +1,123 @@
+{
+  "revision": "async_waypoint_600s_v1",
+  "passed": 29,
+  "failed": 0,
+  "tests": [
+    {
+      "test": "test_allocator_matches_existing_controller_without_inbound_reservations",
+      "status": "pass"
+    },
+    {
+      "test": "test_retained_chargers_waiters_priority_and_rejected_requests",
+      "status": "pass"
+    },
+    {
+      "test": "test_same_time_decisions_commit_intentions_without_time_or_energy",
+      "status": "pass"
+    },
+    {
+      "test": "test_continue_service_preserves_target_and_remaining_timer",
+      "status": "pass"
+    },
+    {
+      "test": "test_continue_flight_preserves_target_and_actual_position",
+      "status": "pass"
+    },
+    {
+      "test": "test_recall_starts_from_interpolated_position_and_cancels_old_task",
+      "status": "pass"
+    },
+    {
+      "test": "test_reservation_locks_across_short_upper_periods",
+      "status": "pass"
+    },
+    {
+      "test": "test_charging_begins_only_after_arrival_waiting_consumes_no_energy",
+      "status": "pass"
+    },
+    {
+      "test": "test_union_clear_and_arrivals_are_counted_once",
+      "status": "pass"
+    },
+    {
+      "test": "test_service_complete_precedes_same_time_upper_recall",
+      "status": "pass"
+    },
+    {
+      "test": "test_exact_terminal_time_does_not_complete_future_service",
+      "status": "pass"
+    },
+    {
+      "test": "test_depletion_precedes_collection_and_is_assessed_once",
+      "status": "pass"
+    },
+    {
+      "test": "test_return_zero_soc_landing_is_consistent_with_approval",
+      "status": "pass"
+    },
+    {
+      "test": "test_lower_reference_failure_and_tail_are_once_and_weighted",
+      "status": "pass"
+    },
+    {
+      "test": "test_shared_reference_responsibility_has_no_overlap",
+      "status": "pass"
+    },
+    {
+      "test": "test_duration_gae_hand_calculation_and_reset_boundary",
+      "status": "pass"
+    },
+    {
+      "test": "test_upper_rollout_spans_resets_and_updates_only_at_full_T",
+      "status": "pass"
+    },
+    {
+      "test": "test_global_lower_stream_reward_conservation_and_zero_time_links",
+      "status": "pass"
+    },
+    {
+      "test": "test_terminal_sac_target_and_single_uav_action_shape",
+      "status": "pass"
+    },
+    {
+      "test": "test_eval_does_not_change_any_training_rng_or_physics",
+      "status": "pass"
+    },
+    {
+      "test": "test_exact_resume_with_pending_lower_and_partial_ppo_rollout",
+      "status": "pass"
+    },
+    {
+      "test": "test_return_cost_does_not_charge_climb_twice",
+      "status": "pass"
+    },
+    {
+      "test": "test_energy_and_packet_conservation_over_reference_8_hours",
+      "status": "pass"
+    },
+    {
+      "test": "test_sac_nonterminal_time_discount_and_zero_time_links",
+      "status": "pass"
+    },
+    {
+      "test": "test_upper_observation_and_masked_actor_loss",
+      "status": "pass"
+    },
+    {
+      "test": "test_map_seed_unchanged_when_training_seed_changes",
+      "status": "pass"
+    },
+    {
+      "test": "test_nonfull_charger_can_leave_and_release_slot",
+      "status": "pass"
+    },
+    {
+      "test": "test_terminal_upper_boundary_has_no_extra_action_or_reward",
+      "status": "pass"
+    },
+    {
+      "test": "test_replay_copy_cyclic_overwrite_and_sampler_resume",
+      "status": "pass"
+    }
+  ]
+}

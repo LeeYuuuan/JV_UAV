@@ -1,0 +1,77 @@
+[
+  {
+    "steps": 200,
+    "simulation_sec": 12000.0,
+    "lower_return": -2110.496666666667,
+    "lower_discounted_return": -635.2345351997251,
+    "reward_terms": {
+      "backlog_post": -2110.496666666667,
+      "all_sensor_clear": 0.0
+    },
+    "mean_max_backlog": 3165.745,
+    "peak_max_backlog": 6194.0,
+    "mean_sensor_backlog": 3047.7983249092104,
+    "sensor_coverage_fraction": 0.0,
+    "outer_visited": 0,
+    "collected_packets": 0.0,
+    "collection_rate_packets_sec": 0.0,
+    "collection_steps": 0,
+    "collected_but_zero_bonus_steps": 0,
+    "mean_clear_fraction": 0.0,
+    "uav_decisions": 950,
+    "seed": 1001,
+    "training_steps": 256,
+    "sac_updates": 0,
+    "policy_mode": "center"
+  },
+  {
+    "steps": 200,
+    "simulation_sec": 12000.0,
+    "lower_return": -2025.4753850715974,
+    "lower_discounted_return": -610.9440287194908,
+    "reward_terms": {
+      "backlog_post": -2053.42,
+      "all_sensor_clear": 27.944614928402633
+    },
+    "mean_max_backlog": 3080.13,
+    "peak_max_backlog": 5983.0,
+    "mean_sensor_backlog": 829.1978359413147,
+    "sensor_coverage_fraction": 0.9933333333333333,
+    "outer_visited": 49,
+    "collected_packets": 743066.0,
+    "collection_rate_packets_sec": 61.92216666666667,
+    "collection_steps": 124,
+    "collected_but_zero_bonus_steps": 0,
+    "mean_clear_fraction": 0.029387459425507717,
+    "uav_decisions": 950,
+    "seed": 1001,
+    "training_steps": 256,
+    "sac_updates": 0,
+    "policy_mode": "random"
+  },
+  {
+    "steps": 200,
+    "simulation_sec": 12000.0,
+    "lower_return": -82.72707346151446,
+    "lower_discounted_return": -35.153996210060406,
+    "reward_terms": {
+      "backlog_post": -105.00666666666666,
+      "all_sensor_clear": 22.279593205152196
+    },
+    "mean_max_backlog": 157.51,
+    "peak_max_backlog": 296.0,
+    "mean_sensor_backlog": 39.08326667785644,
+    "sensor_coverage_fraction": 1.0,
+    "outer_visited": 50,
+    "collected_packets": 895744.0,
+    "collection_rate_packets_sec": 74.64533333333334,
+    "collection_steps": 200,
+    "collected_but_zero_bonus_steps": 0,
+    "mean_clear_fraction": 0.44227172911246115,
+    "uav_decisions": 950,
+    "seed": 1001,
+    "training_steps": 256,
+    "sac_updates": 0,
+    "policy_mode": "greedy_reference"
+  }
+]

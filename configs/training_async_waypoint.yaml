@@ -1,0 +1,59 @@
+revision: async_waypoint_600s_v1
+seed: 43
+episode_sec: 28800.0
+upper_period_sec: 600.0
+service_sec: 30.0
+integration_sec: 10.0
+total_upper_steps: 102400
+upper_rollout_steps: 1024
+eval_every_upper: 200
+full_eval_every_upper: 2000
+save_every_upper: 1000
+evaluation_seeds: [1001, 1002, 1003]
+backlog_input_scale: 3000.0
+upper_reward:
+  reference_sec: 600.0
+  serving_weight: 5.0
+  death_weight: 20.0
+  divisor: 10.0
+lower_reward:
+  backlog_scale: 300.0
+  reference_sec: 60.0
+  top_k: 20
+  rho: 0.5
+  death_weight: 500.0
+  distance_weight: 500.0
+  distance_scale_m: 1800.0
+  terminal_tail: true
+responsibility:
+  inward_fraction: 0.5
+  margin_soc: 0.01
+  shared_upper_weight: 0.5
+upper:
+  hidden: 512
+  actor_lr: 0.0001
+  critic_lr: 0.0001
+  gamma: 0.95
+  gae_lambda: 0.95
+  reference_sec: 600.0
+  entropy_coef: 0.01
+  epochs: 4
+  minibatch_frames: 128
+  clip: 0.2
+  value_coef: 0.5
+  actor_grad_norm: 0.5
+  critic_grad_norm: 2.0
+lower:
+  hidden: 128
+  heads: 4
+  lr: 0.0003
+  gamma: 0.99
+  reference_sec: 60.0
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  random_steps: 10000
+  learning_starts: 10000
+  max_grad_norm: 1.0

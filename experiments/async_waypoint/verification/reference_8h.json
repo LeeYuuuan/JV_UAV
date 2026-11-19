@@ -1,0 +1,104 @@
+[
+  {
+    "simulation_sec": 28800.0,
+    "survived": true,
+    "mean_serving": 2.0,
+    "time_mean_max_backlog": 2428.5337247351763,
+    "peak_max_backlog": 3337.0,
+    "sensor_coverage_fraction": 1.0,
+    "outer_visited": 50,
+    "collected_packets": 2056440.0,
+    "lower_return": -3797.4239281470013,
+    "upper_return": 47.999999999999886,
+    "arrived_packets": 2157627.0,
+    "initial_packets": 4429.0,
+    "final_packets": 105616.0,
+    "collection_rate_packets_sec": 71.40416666666667,
+    "upper_reward_terms": {
+      "serving": 48.0,
+      "death": 0.0
+    },
+    "lower_reward_terms": {
+      "backlog": -3885.6539595762806,
+      "topk": 88.23003142927725,
+      "failure": 0.0,
+      "distance": 0.0,
+      "tail": 0.0
+    },
+    "failures": [],
+    "lower_decisions": 243,
+    "upper_decisions": 48,
+    "charge_requests": 194,
+    "charge_assignments": 96,
+    "seed": 1001,
+    "policy": "handwritten_reference_not_RL"
+  },
+  {
+    "simulation_sec": 28800.0,
+    "survived": true,
+    "mean_serving": 2.0,
+    "time_mean_max_backlog": 2287.791691039209,
+    "peak_max_backlog": 3199.0,
+    "sensor_coverage_fraction": 1.0,
+    "outer_visited": 50,
+    "collected_packets": 2030544.0,
+    "lower_return": -3569.654574143015,
+    "upper_return": 47.999999999999936,
+    "arrived_packets": 2157293.0,
+    "initial_packets": 4542.0,
+    "final_packets": 131291.0,
+    "collection_rate_packets_sec": 70.505,
+    "upper_reward_terms": {
+      "serving": 48.0,
+      "death": 0.0
+    },
+    "lower_reward_terms": {
+      "backlog": -3660.466705662735,
+      "topk": 90.81213151971829,
+      "failure": 0.0,
+      "distance": 0.0,
+      "tail": 0.0
+    },
+    "failures": [],
+    "lower_decisions": 250,
+    "upper_decisions": 48,
+    "charge_requests": 194,
+    "charge_assignments": 96,
+    "seed": 1002,
+    "policy": "handwritten_reference_not_RL"
+  },
+  {
+    "simulation_sec": 28800.0,
+    "survived": true,
+    "mean_serving": 2.0,
+    "time_mean_max_backlog": 2367.3595305607105,
+    "peak_max_backlog": 3360.0,
+    "sensor_coverage_fraction": 1.0,
+    "outer_visited": 50,
+    "collected_packets": 2072860.0,
+    "lower_return": -3699.3728073517186,
+    "upper_return": 47.999999999999936,
+    "arrived_packets": 2161127.0,
+    "initial_packets": 4483.0,
+    "final_packets": 92750.0,
+    "collection_rate_packets_sec": 71.97430555555556,
+    "upper_reward_terms": {
+      "serving": 48.0,
+      "death": 0.0
+    },
+    "lower_reward_terms": {
+      "backlog": -3787.7752488971355,
+      "topk": 88.4024415454174,
+      "failure": 0.0,
+      "distance": 0.0,
+      "tail": 0.0
+    },
+    "failures": [],
+    "lower_decisions": 252,
+    "upper_decisions": 48,
+    "charge_requests": 194,
+    "charge_assignments": 96,
+    "seed": 1003,
+    "policy": "handwritten_reference_not_RL"
+  }
+]
