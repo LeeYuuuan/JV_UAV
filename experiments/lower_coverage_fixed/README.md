@@ -179,6 +179,35 @@ python3 pack_results.py ./runs/lower_coverage_fixed60_all_v1
 
 ## Verification and interpretation
 
+### Fleet overlays and live stage comparison
+
+Each newly started/resumed evaluation now also writes `seed_N/fleet_overlay.png`:
+all6 UAVs share one map, using fixed identity colors. Existing per-UAV trajectory
+panels are retained. Shaded circles cover all selected service positions; triangles
+mark final positions. Lines represent instant relocation in this simplified task.
+
+For an already running process, generate combined figures from saved full traces:
+
+```powershell
+python experiments/lower_coverage_fixed/live_overview.py ./runs/lower_coverage_fixed60_all_move002_g095_v3
+```
+
+It writes/replaces `overview/latest_fleet.png` (all6 together), `latest_groups.png`
+(U0-2 andU3-5), `stage_comparison.png` (up to4 evenly spaced saved stages, same
+evaluation seed/map/colors), and overview.json with exact source paths and metrics.
+Defaults to eval seed1001; use `--seed 1002` or `--steps 15000 25000 35000 45000`.
+
+Keep a separate terminal watching while training continues:
+
+```powershell
+python experiments/lower_coverage_fixed/live_overview.py ./runs/lower_coverage_fixed60_all_move002_g095_v3 --watch 60
+```
+
+The watcher reads files only and redraws on new complete full traces (normally every
+5000 training steps). It does not sample a new trajectory, load a checkpoint, change
+RNG, or interrupt training. Ctrl+C stops only the watcher. The current training
+process gains automatic per-eval overlays next time it is started/resumed.
+
 ```bash
 python3 tests/test_lower_coverage_fixed.py
 python3 experiments/lower_coverage_fixed/train.py --device cpu --smoke --output ./outputs/coverage_fixed_smoke

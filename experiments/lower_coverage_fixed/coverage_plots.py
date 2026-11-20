@@ -23,6 +23,43 @@ def save_figure(fig, path):
     plt.close(fig); temporary.replace(path)
 
 
+def fleet_map(ax, scene, rows, env_cfg, ids=None, title=None):
+    """All selected UAVs on a common map; shared colors across panels."""
+    ids = list(range(scene.num_uavs)) if ids is None else list(ids)
+    palette = plt.get_cmap("tab10")
+    radius = env_cfg["uavs"]["coverage_radius_m"]
+    for uid in ids:
+        segments, positions = [], []
+        for row in rows:
+            if uid in row["active_ids"]:
+                segments.append([row["positions_start"][uid], row["positions_end"][uid]])
+                positions.append(row["positions_end"][uid])
+        color = palette(uid)
+        ax.add_collection(PatchCollection([Circle(xy, radius) for xy in positions], facecolor=color, edgecolor="none", alpha=.025))
+        ax.add_collection(LineCollection(segments, colors=[color], linewidths=.5, linestyles="dashed", alpha=.2))
+        if positions:
+            ax.scatter(*np.asarray(positions).T, s=7, color=color, alpha=.55, zorder=3)
+            ax.scatter(*rows[-1]["positions_end"][uid], s=45, color=color, marker="^", edgecolor="white", lw=.5, zorder=6)
+    ax.scatter(*scene.sensor_pos.T, c="#303c47", s=11, zorder=4)
+    ax.scatter(*scene.airship_pos, marker="*", c="#b3314b", s=110, zorder=6)
+    ax.add_patch(Circle(scene.airship_pos, env_cfg["sensors"]["partition_radius_m"], fill=False, ls="--", color="gray", lw=.8))
+    ax.set(xlim=(0, scene.world_size), ylim=(0, scene.world_size), aspect="equal", title=title,
+           xlabel="East / m", ylabel="North / m")
+    ax.grid(alpha=.12)
+    return [Line2D([], [], marker="o", color=palette(uid), lw=.7, label=f"U{uid}") for uid in ids]
+
+
+def fleet_overlay(env, path):
+    fig, ax = plt.subplots(figsize=(9, 8), layout="constrained")
+    summary = env.summary()
+    handles = fleet_map(ax, env.scene, env.records, env.env_cfg,
+                        title=f"All 6 UAVs | coverage {summary['sensor_coverage_fraction']:.1%} | mean max backlog {summary['mean_max_backlog']:.0f}")
+    ax.legend(handles=handles, ncol=6, loc="upper center", fontsize=9)
+    fig.suptitle("Complete evaluation episode | colored dots=selected positions, triangles=final positions\n"
+                 "Dashed segments are instant relocations; shaded circles show all service footprints", fontsize=10)
+    save_figure(fig, path)
+
+
 def trajectories(env, path):
     s, rows = env.scene, env.records
     fig, axes = plt.subplots(3, 2, figsize=(12, 14), layout="constrained")

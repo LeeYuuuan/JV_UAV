@@ -74,10 +74,11 @@ class Trainer:
             env.step(action)
         summary = env.summary() | dict(seed=seed, training_steps=self.steps, sac_updates=self.updates, policy_mode=mode)
         if output is not None:
-            from coverage_plots import dashboard, trajectories, write_json
+            from coverage_plots import dashboard, trajectories, fleet_overlay, write_json
             output = Path(output); output.mkdir(parents=True, exist_ok=True)
             write_json(output / "summary.json", summary)
             trajectories(env, output / "trajectory.png")
+            fleet_overlay(env, output / "fleet_overlay.png")
             if detailed:
                 write_json(output / "trace.json", dict(sensor_pos=env.scene.sensor_pos.tolist(),
                            sensor_backlog=env.scene.sensor_backlog.tolist(), rows=env.records, action_distribution=probes))
