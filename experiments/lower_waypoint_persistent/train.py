@@ -46,7 +46,7 @@ def validate(cfg):
         raise ValueError("group and episode horizons/counts must be integers")
     if not 0 < cfg["short_steps"] < cfg["block_steps"] or cfg["episode_steps"] <= 0:
         raise ValueError("invalid episode/group horizons")
-    if cfg["step_sec"] <= 0 or cfg["observation_backlog_scale"] <= 0:
+    if cfg["step_sec"] <= 0 or cfg["observation_last_visit_scale_sec"] <= 0:
         raise ValueError("time/input scales must be positive")
     rw, sc = cfg["reward"], cfg["sac"]
     if rw["backlog_scale"] <= 0 or rw["reference_sec"] <= 0 or not 0 <= rw["rho"] < 1:
@@ -57,9 +57,13 @@ def validate(cfg):
         raise ValueError("invalid SAC discount/architecture/alpha")
     if sc["batch_size"] <= 0 or sc["replay_capacity"] < sc["batch_size"]:
         raise ValueError("invalid replay batch/capacity")
+    if sc.get("activation", "relu") not in ("relu", "gelu"):
+        raise ValueError("SAC activation must be relu or gelu")
     if type(cfg["updates_per_physical_step"]) is not int or cfg["updates_per_physical_step"] <= 0 or cfg["arrival_tolerance_m"] <= 0:
         raise ValueError("invalid update ratio or arrival tolerance")
     ex = cfg["exploration"]
+    if ex.get("random_region", "map") not in ("map", "sensor_union"):
+        raise ValueError("random_region must be map or sensor_union")
     probabilities = [ex["random_probability"], ex["greedy_probability"], ex["actor_probability"]]
     if min(probabilities) < 0 or not np.isclose(sum(probabilities), 1.0):
         raise ValueError("exploration probabilities must sum to1")
@@ -158,6 +162,7 @@ def main():
           f"{cfg['episode_steps']} steps/episode, {cfg['step_sec']:g}s/step | seed {cfg['seed']}", flush=True)
     print(f"Output: {output.resolve()}", flush=True)
     print(f"Movement penalty weight: {cfg['reward'].get('movement_weight', 0.0):g} (mean active distance / map diagonal)", flush=True)
+    print(f"Hidden activation: {cfg['sac'].get('activation', 'relu')}", flush=True)
     if trainer.steps == 0:
         evaluate(True, baselines=True)
     started = time.monotonic()

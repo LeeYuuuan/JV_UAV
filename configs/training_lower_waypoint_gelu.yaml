@@ -1,0 +1,50 @@
+revision: lower_persistent_lastvisit_gelu_sensor_union_v4
+seed: 43
+total_steps: 500000
+episode_steps: 200
+step_sec: 60.0
+block_steps: 20
+short_steps: 10
+long_count_min: 3
+long_count_max: 4
+observation_last_visit_scale_sec: 6000.0
+arrival_tolerance_m: 0.01
+updates_per_physical_step: 1
+reward:
+  backlog_scale: 300.0
+  reference_sec: 60.0
+  rho: 0.5
+  movement_weight: 0.02
+exploration:
+  epsilon_start: 1.0
+  epsilon_end: 0.1
+  decay_physical_steps: 100000
+  random_probability: 0.25
+  greedy_probability: 0.5
+  actor_probability: 0.25
+  random_region: sensor_union
+  greedy_jitter_m: 0.0
+  candidate_count: 6
+sac:
+  hidden: 128
+  heads: 4
+  lr: 0.0003
+  gamma_per_reference: 0.95
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  learning_starts: 0
+  max_grad_norm: 1.0
+  activation: gelu
+eval_every: 1000
+full_eval_every: 5000
+save_every: 5000
+plot_every: 1000
+log_every_episodes: 5
+trace_every_steps: 10
+evaluation_seeds:
+- 1001
+- 1002
+- 1003

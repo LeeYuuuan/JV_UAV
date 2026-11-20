@@ -110,20 +110,20 @@ def test_exploration_branch_frequencies_and_valid_world_targets():
     assert abs(sampler.counts["actor"] / total - .25) < .025
 
 
-def test_greedy_top6_nearest_jitter_and_overlap_reservation():
+def test_greedy_top6_nearest_exact_target_and_overlap_reservation():
     ec, cfg = configs()
     ex = copy.deepcopy(cfg["exploration"])
     ex.update(epsilon_start=1, epsilon_end=1, random_probability=0, greedy_probability=1, actor_probability=0)
     sampler = WaypointSampler(ex, ec, 43)
     positions = np.column_stack([np.arange(8) * 500, np.full(8, 1000)]).astype(np.float32)
     obs = dict(ids=np.arange(6), positions=np.tile([3500, 1000], (6, 1)),
-               sensor_pos=positions, backlog=np.arange(80, 0, -10).astype(np.float32))
+               sensor_pos=positions, sensor_last_visit_sec=np.arange(80, 0, -10).astype(np.float32))
     action, info = sampler.propose(obs, np.zeros((6, 2), np.float32), 0)
     assert info["greedy_sensor_ids"][0] == 5  # nearest from top6, not nearest low-priority point7
     assert len(set(info["greedy_sensor_ids"])) == 6
     target = (action + 1) * 2000
     for xy, index in zip(target, info["greedy_sensor_ids"]):
-        assert np.max(np.abs(xy - positions[index])) <= 20.001
+        assert np.allclose(xy, positions[index], atol=0.001, rtol=0)
         assert np.linalg.norm(xy - positions[index]) < ec["uavs"]["coverage_radius_m"]
 
 
@@ -213,7 +213,7 @@ def test_inactive_context_and_noncontiguous_action_id_packing():
     assert packed["mask"][0].tolist() == [False, True, False, True, False, True]
     assert packed["context_mask"].all()
     assert np.allclose(packed["uavs"][0, :, :2], env.scene.uav_pos / 4000)
-    assert packed["uavs"].shape[-1] == 7
+    assert packed["uavs"].shape[-1] == 3
     actual = np.array([[.1, .2], [.3, .4], [.5, .6]], np.float32)
     captured = []
     def hook(module, args):
@@ -228,6 +228,110 @@ def test_inactive_context_and_noncontiguous_action_id_packing():
     assert np.allclose(trainer.sac.act(obs, deterministic=True), full[0, [1, 3, 5]])
 
 
+def test_observable_only_policy_critic_replay_and_teacher_inputs():
+    ec, cfg = configs(True); trainer = Trainer(ec, cfg)
+    env = trainer.env
+    obs = env.observation()
+    assert set(obs) == {"sensor_pos", "sensor_last_visit_sec", "ids", "positions", "all_positions"}
+    before = trainer.sac.pack([obs])
+    expected_sensor = np.column_stack([env.scene.sensor_pos / 4000, env.scene.sensor_last_visit_sec / 6000])
+    assert np.allclose(before["sensors"][0], expected_sensor)
+    assert before["uavs"].shape[-1] == 3
+    assert trainer.sac.critic.q1.head[0].in_features == cfg["sac"]["hidden"]
+    env.scene.sensor_backlog[:] = np.arange(env.scene.num_sensors) * 10000
+    env.scene.now_sec += 12345
+    after_obs = env.observation(); after = trainer.sac.pack([after_obs])
+    assert all(torch.equal(before[key], after[key]) for key in before)
+    assert np.array_equal(trainer.sac.act(obs, deterministic=True), trainer.sac.act(after_obs, deterministic=True))
+    teacher = trainer.sampler; saved = teacher.state_dict()
+    a, ma = teacher.propose(obs, np.zeros((6, 2), np.float32), 0)
+    teacher.load_state_dict(saved)
+    b, mb = teacher.propose(after_obs, np.zeros((6, 2), np.float32), 0)
+    assert np.array_equal(a, b) and ma == mb
+    trainer.replay.add(obs, np.zeros((6, 2), np.float32), -1, after_obs, False, 60)
+    allowed = {"sensor_last_visit_sec", "ids", "positions", "all_positions"}
+    assert set(trainer.replay.items[0][0]) == allowed and set(trainer.replay.items[0][3]) == allowed
+
+
+def test_extra_hidden_fields_are_not_packed_or_retained():
+    ec, cfg = configs(True); trainer = Trainer(ec, cfg)
+    obs = trainer.env.observation(); decorated = copy.deepcopy(obs)
+    decorated.update(backlog=np.full(150, 1e9), remaining=.25, service_remaining=np.ones(6),
+                     all_service_remaining=np.ones(6), active_count=6)
+    a, b = trainer.sac.pack([obs]), trainer.sac.pack([decorated])
+    assert all(torch.equal(a[k], b[k]) for k in a)
+    trainer.replay.add(decorated, np.zeros((6, 2), np.float32), -1, decorated, False, 60)
+    assert not ({"backlog", "remaining", "service_remaining", "active_count"} & trainer.replay.items[0][0].keys())
+
+
+def test_last_visit_age_updates_from_executed_coverage_only():
+    ec, cfg = configs()
+    env = PersistentEnv(ec, cfg)
+    env.scene.sensor_pos[:] = [4000, 4000]
+    env.scene.sensor_pos[0] = [2000, 2000]
+    env.step(np.zeros((6, 2), np.float32))
+    age = env.observation()["sensor_last_visit_sec"]
+    assert age[0] == 0 and np.all(age[1:] == 120)
+
+
+def test_old_privileged_input_checkpoint_is_rejected():
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "old.pt"
+        torch.save(dict(format="persistent_waypoint_noenergy_v1"), path)
+        try:
+            Trainer.load(path)
+            raise AssertionError("privileged-input checkpoint accepted")
+        except ValueError as error:
+            assert "last-visit" in str(error)
+
+
+def test_gelu_option_preserves_observation_and_restores_on_resume():
+    ec, cfg = configs(True)
+    relu = Trainer(ec, cfg)
+    assert isinstance(relu.sac.actor.encoder.sensor[1], torch.nn.ReLU)
+    cfg["sac"]["activation"] = "gelu"
+    gelu = Trainer(ec, cfg)
+    assert isinstance(gelu.sac.actor.encoder.sensor[1], torch.nn.GELU)
+    assert isinstance(gelu.sac.critic.q1.head[1], torch.nn.GELU)
+    assert gelu.sac.actor.encoder.team.layers[0].activation is torch.nn.functional.gelu
+    assert gelu.sac.critic.q2.encoder.team.layers[0].activation is torch.nn.functional.gelu
+    obs = gelu.env.observation()
+    assert set(obs) == {"sensor_pos", "sensor_last_visit_sec", "ids", "positions", "all_positions"}
+    for _ in range(2): gelu.step()
+    assert gelu.updates > 0 and all(np.isfinite(x) for x in gelu.last_losses.values())
+    expected = gelu.sac.act(gelu.env.observation(), deterministic=True)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "gelu.pt"; gelu.save(path)
+        restored = Trainer.load(path)
+        assert restored.cfg["sac"]["activation"] == "gelu"
+        assert np.array_equal(expected, restored.sac.act(restored.env.observation(), deterministic=True))
+
+
+def test_sensor_union_random_targets_and_overlap_area_uniformity():
+    ec, cfg = configs()
+    sampler = WaypointSampler(cfg["exploration"], ec, 123)
+    # Duplicate disk must not receive twice the probability of a separate disk.
+    sensors = np.array([[500., 500.], [500., 500.], [3000., 3000.]])
+    points = np.array([sampler.random_target(sensors) for _ in range(3000)])
+    distances = np.linalg.norm(points[:, None, :] - sensors[None, :, :], axis=2)
+    assert np.all(distances.min(axis=1) <= sampler.radius + 1e-7)
+    assert .46 < np.mean(distances[:, 0] <= sampler.radius) < .54
+    # Corner disks are intersected with the map, not clipped onto its boundary.
+    points = np.array([sampler.random_target(np.array([[0., 0.]])) for _ in range(300)])
+    assert np.all(points > 0) and np.all(points < sampler.size)
+    assert np.all(np.linalg.norm(points, axis=1) <= sampler.radius + 1e-7)
+
+
+def test_legacy_random_sampling_and_jitter_config_preserved():
+    ec, cfg = configs()
+    old = copy.deepcopy(cfg["exploration"])
+    old.pop("random_region")
+    old["greedy_jitter_m"] = 20.
+    sampler = WaypointSampler(old, ec, 123)
+    expected = (np.random.default_rng(123).uniform(-1, 1, 2) + 1) * (sampler.size / 2)
+    assert np.array_equal(sampler.random_target(np.array([[0., 0.]])), expected)
+
+
 if __name__ == "__main__":
     torch.set_num_threads(1)
     names = []
@@ -235,3 +339,5 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn(); names.append(name); print("PASS", name, flush=True)
     print(json.dumps(dict(passed=len(names), tests=names)), flush=True)
+
+

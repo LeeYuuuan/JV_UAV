@@ -10,15 +10,23 @@ from torch.nn import functional as F
 from jv_uav.rl.sac import backward_step
 
 
+def hidden_activation(name):
+    if name == "relu":
+        return nn.ReLU()
+    if name == "gelu":
+        return nn.GELU()
+    raise ValueError("activation must be relu or gelu")
+
+
 class Encoder(nn.Module):
-    def __init__(self, hidden, heads, action=False):
+    def __init__(self, hidden, heads, action=False, activation="relu"):
         super().__init__()
-        self.sensor = nn.Sequential(nn.Linear(3, hidden), nn.ReLU(), nn.Linear(hidden, hidden))
-        self.uav = nn.Linear(7 + (2 if action else 0), hidden)
+        self.sensor = nn.Sequential(nn.Linear(3, hidden), hidden_activation(activation), nn.Linear(hidden, hidden))
+        self.uav = nn.Linear(3 + (2 if action else 0), hidden)
         self.cross = nn.MultiheadAttention(hidden, heads, dropout=0.0, batch_first=True)
         self.norm = nn.LayerNorm(hidden)
         layer = nn.TransformerEncoderLayer(hidden, heads, hidden * 2, dropout=0.0,
-                                            batch_first=True, norm_first=True)
+                                            batch_first=True, norm_first=True, activation=activation)
         self.team = nn.TransformerEncoder(layer, 1, enable_nested_tensor=False)
 
     def forward(self, batch, action=None):
@@ -33,9 +41,9 @@ class Encoder(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self, hidden, heads):
+    def __init__(self, hidden, heads, activation="relu"):
         super().__init__()
-        self.encoder = Encoder(hidden, heads)
+        self.encoder = Encoder(hidden, heads, activation=activation)
         self.mean = nn.Linear(hidden, 2)
         self.log_std = nn.Linear(hidden, 2)
 
@@ -53,18 +61,17 @@ class Actor(nn.Module):
 
 
 class Q(nn.Module):
-    def __init__(self, hidden, heads, fleet):
+    def __init__(self, hidden, heads, fleet, activation="relu"):
         super().__init__()
-        self.encoder = Encoder(hidden, heads, action=True)
-        self.head = nn.Sequential(nn.Linear(hidden + 1, hidden), nn.ReLU(), nn.Linear(hidden, 1))
+        self.encoder = Encoder(hidden, heads, action=True, activation=activation)
+        self.head = nn.Sequential(nn.Linear(hidden, hidden), hidden_activation(activation), nn.Linear(hidden, 1))
         self.fleet = fleet
 
     def forward(self, batch, action):
         h = self.encoder(batch, action)
-        count = batch["mask"].sum(1, keepdim=True)
         context_count = batch["context_mask"].sum(1, keepdim=True)
         h = h.masked_fill(~batch["context_mask"][..., None], 0).sum(1) / context_count
-        return self.head(torch.cat((h, count / self.fleet), -1)).squeeze(-1)
+        return self.head(h).squeeze(-1)
 
 
 class TwinQ(nn.Module):
@@ -83,11 +90,12 @@ class PersistentSAC:
         self.size = env.scene.world_size
         self.fleet = env.scene.num_uavs
         self.sensor_xy = env.scene.sensor_pos.copy() / self.size
-        self.scale = env.cfg["observation_backlog_scale"]
+        self.scale = env.cfg["observation_last_visit_scale_sec"]
         self.gamma = cfg["gamma_per_reference"]
         self.reference_sec = env.cfg["reward"]["reference_sec"]
-        self.actor = Actor(cfg["hidden"], cfg["heads"]).to(device)
-        self.critic = TwinQ(cfg["hidden"], cfg["heads"], self.fleet).to(device)
+        activation = cfg.get("activation", "relu")
+        self.actor = Actor(cfg["hidden"], cfg["heads"], activation).to(device)
+        self.critic = TwinQ(cfg["hidden"], cfg["heads"], self.fleet, activation).to(device)
         self.target = copy.deepcopy(self.critic).requires_grad_(False)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg["lr"])
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg["lr"])
@@ -98,20 +106,15 @@ class PersistentSAC:
         n = len(observations)
         sensors = np.zeros((n, len(self.sensor_xy), 3), np.float32)
         sensors[:, :, :2] = self.sensor_xy
-        uavs = np.zeros((n, self.fleet, 7), np.float32)
+        uavs = np.zeros((n, self.fleet, 3), np.float32)
         mask = np.zeros((n, self.fleet), bool)
         for i, obs in enumerate(observations):
-            count = len(obs["ids"])
-            sensors[i, :, 2] = obs["backlog"] / self.scale
+            sensors[i, :, 2] = obs["sensor_last_visit_sec"] / self.scale
             # Fixed token index=physical UAV ID. Inactive positions affect future
             # departures, so retain all fleet tokens as attention context.
             uavs[i, :, :2] = obs["all_positions"] / self.size
             uavs[i, :, 2] = np.arange(self.fleet) / max(self.fleet - 1, 1)
-            uavs[i, :, 3] = obs["all_service_remaining"]
-            uavs[i, :, 4] = obs["remaining"]
             mask[i, obs["ids"]] = True
-            uavs[i, :, 5] = mask[i]
-            uavs[i, :, 6] = count / self.fleet
         return {key: torch.as_tensor(value, device=self.device) for key, value in
                 dict(sensors=sensors, uavs=uavs, mask=mask, context_mask=np.ones_like(mask)).items()}
 
@@ -174,7 +177,7 @@ class PersistentSAC:
                     alpha=float(self.log_alpha.exp().detach()), alpha_loss=float(alpha_loss.detach()),
                     q_mean=float(q.detach().mean()), target_mean=float(target.mean()),
                     reward_mean=float(reward.mean()), discount_mean=float(discount.mean()),
-                    input_backlog_abs_max=float(batch["sensors"][:, :, 2].abs().max()))
+                    input_last_visit_abs_max=float(batch["sensors"][:, :, 2].abs().max()))
 
     def state_dict(self):
         return {name: getattr(self, name).state_dict() for name in
@@ -189,7 +192,8 @@ class PersistentSAC:
 
 
 def compact(obs):
-    return {k: copy.deepcopy(v) for k, v in obs.items() if k != "sensor_pos"}
+    # Explicit observable-only replay schema; no simulation queues or clocks.
+    return {k: copy.deepcopy(obs[k]) for k in ("sensor_last_visit_sec", "ids", "positions", "all_positions")}
 
 
 class Replay:

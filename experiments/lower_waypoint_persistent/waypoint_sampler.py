@@ -15,6 +15,29 @@ class WaypointSampler:
         ratio = np.clip(physical_steps / self.cfg["decay_physical_steps"], 0, 1)
         return float(self.cfg["epsilon_start"] + ratio * (self.cfg["epsilon_end"] - self.cfg["epsilon_start"]))
 
+    def random_target(self, sensor_pos):
+        # Missing key preserves the full-map behavior of existing checkpoints.
+        if self.cfg.get("random_region", "map") == "map":
+            return (self.rng.uniform(-1, 1, 2) + 1) * (self.size / 2)
+        if self.cfg["random_region"] != "sensor_union":
+            raise ValueError("unknown random waypoint region")
+        sensor_pos = np.asarray(sensor_pos, dtype=np.float64)
+        if len(sensor_pos) == 0 or self.radius <= 0:
+            raise ValueError("sensor-union sampling requires sensors and positive radius")
+        # Uniform disk proposal; reject map-exterior points rather than clipping.
+        # A location covered by m disks has m times the proposal density.
+        # Accepting with 1/m makes the final distribution uniform over the union.
+        while True:
+            center = sensor_pos[self.rng.integers(len(sensor_pos))]
+            angle = self.rng.uniform(0, 2 * np.pi)
+            distance = self.radius * np.sqrt(self.rng.random())
+            point = center + distance * np.array([np.cos(angle), np.sin(angle)])
+            if np.any(point < 0) or np.any(point > self.size):
+                continue
+            multiplicity = np.count_nonzero(np.sum((sensor_pos - point) ** 2, axis=1) <= self.radius ** 2)
+            if multiplicity and self.rng.random() < 1.0 / multiplicity:
+                return point
+
     def propose(self, obs, actor_action, physical_steps):
         actor_action = np.asarray(actor_action, np.float32)
         if actor_action.shape != (len(obs["ids"]), 2):
@@ -27,7 +50,7 @@ class WaypointSampler:
         targets = (actor_action.copy() + 1) * (self.size / 2)
         for i, label in enumerate(labels):
             if label == "random":
-                targets[i] = (self.rng.uniform(-1, 1, 2) + 1) * (self.size / 2)
+                targets[i] = self.random_target(obs["sensor_pos"])
         sensor_pos = obs["sensor_pos"]
         reserved = np.zeros(len(sensor_pos), bool)
         for i, label in enumerate(labels):
@@ -40,7 +63,9 @@ class WaypointSampler:
             available = np.flatnonzero(~reserved)
             if not len(available):
                 available = np.arange(len(sensor_pos))
-            order = np.argsort(-obs["backlog"][available], kind="stable")
+            # Last-visit age is known from collection acknowledgements. Never
+            # inspect true queues, even for the exploration teacher.
+            order = np.argsort(-obs["sensor_last_visit_sec"][available], kind="stable")
             pool = available[order[:self.cfg["candidate_count"]]]
             best = int(pool[np.linalg.norm(sensor_pos[pool] - obs["positions"][i], axis=1).argmin()])
             point = sensor_pos[best] + self.rng.uniform(-self.cfg["greedy_jitter_m"], self.cfg["greedy_jitter_m"], 2)

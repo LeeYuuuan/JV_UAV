@@ -36,12 +36,9 @@ class PhysicalSlots:
         if not len(ids):
             ids = self.long_ids.copy()
         s = self.scene
-        return dict(sensor_pos=s.sensor_pos.copy(), backlog=s.sensor_backlog.copy(), ids=ids,
+        return dict(sensor_pos=s.sensor_pos.copy(), sensor_last_visit_sec=s.sensor_last_visit_sec.copy(), ids=ids,
                     positions=s.uav_pos[ids].copy(),
-                    all_positions=s.uav_pos.copy(),
-                    all_service_remaining=np.maximum(self.horizons - self.phase, 0).astype(np.float32) / self.cfg["block_steps"],
-                    service_remaining=np.maximum(self.horizons[ids] - self.phase, 0).astype(np.float32) / self.cfg["block_steps"],
-                    remaining=max(0.0, 1.0 - self.steps / self.cfg["episode_steps"]))
+                    all_positions=s.uav_pos.copy())
 
     def _physical_step(self, action):
         if self.done:

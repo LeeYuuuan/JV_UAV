@@ -1,7 +1,7 @@
 {
-  "revision": "lower_persistent_speed_epsilon_v1",
+  "revision": "lower_persistent_lastvisit_v2",
   "date": "2026-11-19",
-  "passed": 14,
+  "passed": 18,
   "tests": [
     "test_real_speed_and_target_persistence_until_group_change",
     "test_early_arrivals_hold_and_continue_serving",
@@ -16,13 +16,17 @@
     "test_exact_resume_after_group_change_and_episode_end",
     "test_eval_actor_only_mean_and_training_rng_unchanged",
     "test_energy_is_disabled_and_physical_images_are_saved",
-    "test_inactive_context_and_noncontiguous_action_id_packing"
+    "test_inactive_context_and_noncontiguous_action_id_packing",
+    "test_observable_only_policy_critic_replay_and_teacher_inputs",
+    "test_extra_hidden_fields_are_not_packed_or_retained",
+    "test_last_visit_age_updates_from_executed_coverage_only",
+    "test_old_privileged_input_checkpoint_is_rejected"
   ],
   "extra_checks": [
-    "CPU CLI smoke and resume",
-    "nondivisible physical-step eval/save thresholds",
-    "128hidden batch256 context/action mask update",
-    "plots visual inspection",
-    "result package integrity"
+    "observable-only hidden-queue invariance",
+    "actor/critic input and replay whitelist",
+    "teacher uses last-visit age only",
+    "128hidden batch256 update",
+    "CPU CLI smoke and resume"
   ]
 }
