@@ -62,7 +62,8 @@ def main():
             f.flush()
         evals.extend(results);write_json(output/'latest_eval.json',results)
         print('  eval | '+' | '.join(f"{r['policy_mode']} seed{r['seed']} R/step={r['mean_step_reward']:.4f} Bmax={r['mean_max_backlog']:.1f} cover={r['sensor_coverage_fraction']:.0%}" for r in results),flush=True)
-        print(f"  plots: {output}/eval_{t.steps:08d}/seed_*/eval_steps_01_15.png and eval_steps_16_30.png",flush=True)
+        page=cfg.get('evaluation_page_steps',15)
+        print(f"  plots: {output}/eval_{t.steps:08d}/seed_*/eval_steps_01_{page:02d}.png and eval_steps_{page+1:02d}_{2*page:02d}.png",flush=True)
     budget=args.steps or cfg['total_steps'];end=t.steps+budget
     print(f"Continuing SAC | {cfg['revision']} | {device} | additional steps {budget} | no environment reset or terminal at window/budget boundaries",flush=True)
     print(f"Reward: -B/300 * (1-{cfg['reward']['rho']}*h_top{cfg['reward']['top_k']}) - movement | gamma={cfg['sac']['gamma_per_reference']}",flush=True)

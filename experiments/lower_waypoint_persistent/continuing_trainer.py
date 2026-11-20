@@ -22,8 +22,8 @@ def summarize(env, rows, decisions):
 
 class ContinuingTrainer(Trainer):
     def __init__(self, env_cfg, cfg, device='cpu'):
-        if not cfg.get('continuing_task') or cfg.get('max_decision_physical_steps') != 1:
-            raise ValueError('continuing experiment requires continuing_task and one-step decisions')
+        if not cfg.get('continuing_task'):
+            raise ValueError('continuing experiment requires continuing_task')
         super().__init__(env_cfg, cfg, device)
         self.windows = 0
         self.window_pending = False
@@ -81,8 +81,10 @@ class ContinuingTrainer(Trainer):
         summary = summarize(env, env.records, env.decision_records)
         summary.update(seed=seed, training_steps=self.steps, policy_mode=mode,
                        sac_updates=self.updates, terminated=False, evaluation_cutoff=True,
-                       segment_summaries=[summarize(env, env.records[a:a+15], env.decision_records[a:a+15])
-                                          for a in range(0, len(env.records), 15)])
+                       segment_summaries=[summarize(env, env.records[a:a+self.cfg.get('evaluation_page_steps',15)],
+                           [d for d in env.decision_records if d['end_physical_step']>a and
+                            d['start_physical_step']<a+self.cfg.get('evaluation_page_steps',15)])
+                           for a in range(0, len(env.records), self.cfg.get('evaluation_page_steps',15))])
         if output is not None:
             from persistent_plots import write_json
             from continuing_plots import evaluation_pages
@@ -91,7 +93,7 @@ class ContinuingTrainer(Trainer):
             write_json(output / 'trace.json', dict(sensor_pos=env.scene.sensor_pos.tolist(),
                        final_sensor_backlog=env.scene.sensor_backlog.tolist(),
                        rows=env.records, decisions=env.decision_records, action_distribution=probes))
-            evaluation_pages(env, output)
+            evaluation_pages(env, output, mode=mode)
         return summary
 
     def save(self, path):

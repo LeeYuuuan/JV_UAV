@@ -103,6 +103,28 @@ def test_finite_checkpoint_not_silently_imported_into_continuing():
         else:raise AssertionError('finite checkpoint accepted')
 
 
+def test_large_overnight_macro_discount_groups_and_eval_pages():
+    ec=load_config(ROOT/'configs/default.yaml')
+    cfg=yaml.safe_load((ROOT/'configs/training_continuing_large_overnight.yaml').read_text())
+    validate(cfg)
+    assert cfg['total_steps']==900000 and cfg['exploration']['candidate_count']==6
+    assert cfg['reward']['top_k']==18 and cfg['reward']['rho']==.8
+    tiny=copy.deepcopy(cfg);tiny['sac'].update(hidden=16,heads=2,batch_size=2,replay_capacity=128)
+    t=ContinuingTrainer(ec,tiny)
+    env=PersistentEnv(ec,cfg);obs=env.observation();action=np.ones((6,2),np.float32)
+    nxt,reward,done,row=env.step(action)
+    assert row['physical_steps']==10 and not done and len(nxt['ids']) in (3,4)
+    loss=t.sac.update([(obs,action,reward,nxt,False,row['duration_sec'])]*2)
+    assert np.isclose(loss['discount_mean'],.95**10)
+    with tempfile.TemporaryDirectory() as folder:
+        summary=t.evaluate(1001,folder,mode='greedy_reference')
+        rows=json.loads((Path(folder)/'trace.json').read_text())['rows']
+        assert len(rows)==40 and rows[19]['positions_end']==rows[20]['positions_start']
+        assert (Path(folder)/'eval_steps_01_20.png').exists()
+        assert (Path(folder)/'eval_steps_21_40.png').exists()
+        assert [v['steps'] for v in summary['segment_summaries']]==[20,20]
+
+
 if __name__=='__main__':
     torch.set_num_threads(1)
     names=[]

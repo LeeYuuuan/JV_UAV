@@ -49,13 +49,15 @@ def validate(cfg):
     if type(cfg.get("continuing_task", False)) is not bool:
         raise ValueError("continuing_task must be boolean")
     if cfg.get("continuing_task"):
-        if cfg.get("max_decision_physical_steps") != 1:
-            raise ValueError("continuing experiment currently requires one-step decisions")
         for key in ("statistics_window_steps", "evaluation_steps", "log_every_windows"):
             if type(cfg.get(key)) is not int or cfg[key] <= 0:
                 raise ValueError(f"{key} must be a positive integer")
-        if cfg["evaluation_steps"] != 30:
-            raise ValueError("continuing evaluation uses exactly30 steps, in two15-step pages")
+        page = cfg.get("evaluation_page_steps", 15)
+        if type(page) is not int or page <= 0 or cfg["evaluation_steps"] != 2 * page:
+            raise ValueError("continuing evaluation must have two equally sized pages")
+        if cfg.get("max_decision_physical_steps") is None:
+            if cfg["evaluation_steps"] % cfg["block_steps"] or cfg["statistics_window_steps"] % cfg["block_steps"]:
+                raise ValueError("macro decision eval/statistics budgets must align with service blocks")
     if type(cfg.get("disable_rotation", False)) is not bool:
         raise ValueError("disable_rotation must be boolean")
     limit = cfg.get("max_decision_physical_steps")

@@ -1,0 +1,73 @@
+revision: continuing_small6_greedy_rho08_180k_eval40_v2
+seed: 43
+total_steps: 180000
+episode_steps: 15
+step_sec: 60.0
+block_steps: 15
+short_steps: 1
+long_count_min: 1
+long_count_max: 1
+observation_last_visit_scale_sec: 6000.0
+arrival_tolerance_m: 0.01
+updates_per_physical_step: 1
+reward:
+  backlog_scale: 300.0
+  reference_sec: 60.0
+  rho: 0.8
+  movement_weight: 0.02
+  backlog_weight: 1.0
+  top_k: 18
+exploration:
+  epsilon_start: 1.0
+  epsilon_end: 0.1
+  decay_physical_steps: 100000
+  random_probability: 0.25
+  greedy_probability: 0.5
+  actor_probability: 0.25
+  random_region: sensor_union
+  greedy_jitter_m: 0.0
+  candidate_count: 1
+sac:
+  include_active_status: true
+  hidden: 128
+  heads: 4
+  lr: 0.0003
+  gamma_per_reference: 0.95
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  learning_starts: 0
+  max_grad_norm: 1.0
+  activation: gelu
+eval_every: 5000
+full_eval_every: 5000
+save_every: 5000
+plot_every: 5000
+log_every_episodes: 100
+trace_every_steps: 5
+evaluation_seeds:
+- 1001
+- 1002
+- 1003
+disable_rotation: true
+max_decision_physical_steps: 1
+fixed_sensor_positions_m:
+- - 440.0
+  - 300.0
+- - 370.0
+  - 421.2435565298214
+- - 230.00000000000003
+  - 421.24355652982143
+- - 160.0
+  - 300.0
+- - 229.99999999999994
+  - 178.75644347017862
+- - 370.0
+  - 178.7564434701786
+continuing_task: true
+statistics_window_steps: 15
+evaluation_steps: 40
+log_every_windows: 20
+evaluation_page_steps: 20
