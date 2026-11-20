@@ -1,6 +1,7 @@
 """Persistent waypoint diagnostics: lines are actual executed movement."""
 from pathlib import Path
 import json
+import time
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -14,7 +15,16 @@ from matplotlib.lines import Line2D
 def write_json(path, data):
     path = Path(path); temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, allow_nan=False), encoding="utf-8")
-    temporary.replace(path)
+    # Windows readers/scanners can briefly deny atomic replacement. Retain the
+    # atomic write, but retry transient sharing/access failures before failing.
+    for attempt in range(20):
+        try:
+            temporary.replace(path)
+            break
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 def save_figure(fig, path):
@@ -53,7 +63,7 @@ def fleet_overlay(env, path):
     fig, ax = plt.subplots(figsize=(9, 8), layout="constrained")
     summary = env.summary()
     handles = fleet_map(ax, env.scene, env.records, env.env_cfg,
-                        title=f"All 6 UAVs | coverage {summary['sensor_coverage_fraction']:.1%} | mean max backlog {summary['mean_max_backlog']:.0f}")
+                        title=f"All {env.scene.num_uavs} UAVs | coverage {summary['sensor_coverage_fraction']:.1%} | mean max backlog {summary['mean_max_backlog']:.0f}")
     ax.legend(handles=handles, ncol=6, loc="upper center", fontsize=9)
     fig.suptitle("Complete evaluation episode | colored dots=selected positions, triangles=final positions\n"
                  "Solid segments are real executed movements; shaded circles show all service footprints", fontsize=10)
@@ -62,10 +72,15 @@ def fleet_overlay(env, path):
 
 def trajectories(env, path):
     s, rows = env.scene, env.records
-    fig, axes = plt.subplots(3, 2, figsize=(12, 14), layout="constrained")
+    columns = min(2, s.num_uavs)
+    nrows = (s.num_uavs + columns - 1) // columns
+    fig, axes = plt.subplots(nrows, columns, figsize=(6 * columns, 4.7 * nrows), layout="constrained", squeeze=False)
     norm, cmap = Normalize(1, max(len(rows), 2)), plt.get_cmap("viridis")
     radius = env.env_cfg["uavs"]["coverage_radius_m"]
     for uid, ax in enumerate(axes.flat):
+        if uid >= s.num_uavs:
+            ax.set_visible(False)
+            continue
         segments, positions, times, circles = [], [], [], []
         for row in rows:
             if uid not in row["active_ids"]:
@@ -117,7 +132,7 @@ def dashboard(env, path):
         active[row["active_ids"], i] = 1
     axes[2, 0].imshow(active, aspect="auto", origin="upper", cmap="Blues", vmin=0, vmax=1,
                       extent=[.5, len(rows) + .5, s.num_uavs - .5, -.5], interpolation="nearest")
-    axes[2, 0].set(title="Active UAVs (blue); groups resampled every20 steps", xlabel="Step", ylabel="UAV ID")
+    axes[2, 0].set(title="Active UAVs (blue); no rotation" if env.cfg.get("disable_rotation", False) else f"Active UAVs (blue); groups every {env.cfg['block_steps']} steps", xlabel="Step", ylabel="UAV ID")
     axes[2, 1].plot(x, [r["collected_packets"] for r in rows])
     axes[2, 1].set(title="Actual collected packets per step", xlabel="Step", ylabel="Packets")
     summary = env.summary()

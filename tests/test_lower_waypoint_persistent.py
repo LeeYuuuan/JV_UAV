@@ -381,6 +381,72 @@ def test_legacy_without_status_checkpoint_loads_without_silent_conversion():
         assert np.array_equal(expected, restored.sac.act(restored.env.observation(), deterministic=True))
 
 
+def test_minimal_five_has_five_decisions_no_rotation_and_feasible_tour():
+    ec = load_config(ROOT / "configs/env_lower_minimal5.yaml")
+    cfg = yaml.safe_load((ROOT / "configs/training_lower_minimal5.yaml").read_text())
+    env = PersistentEnv(ec, cfg)
+    initial_rng = copy.deepcopy(env.selection_rng.bit_generator.state)
+    points = env.scene.sensor_pos.copy()
+    for k in range(5):
+        assert env.observation()["ids"].tolist() == [0]
+        action = (points[k:k+1] / 300 - 1).astype(np.float32)
+        _, _, done, row = env.step(action)
+        assert row["physical_steps"] == 1 and done == (k == 4)
+        assert np.linalg.norm(env.scene.uav_pos[0] - points[k]) < .01
+        assert env.records[-1]["covered_ids"] == [k]
+        assert not len(env.short_ids)
+    assert env.steps == len(env.decision_records) == 5
+    assert env.summary()["sensor_coverage_fraction"] == 1.
+    assert env.selection_rng.bit_generator.state == initial_rng
+    env.reset()
+    assert np.array_equal(points, env.scene.sensor_pos)
+    assert np.allclose(env.scene.uav_pos, [300, 300])
+
+
+def test_minimal_five_can_update_evaluate_and_resume():
+    ec = load_config(ROOT / "configs/env_lower_minimal5.yaml")
+    cfg = yaml.safe_load((ROOT / "configs/training_lower_minimal5.yaml").read_text())
+    cfg["sac"].update(hidden=16,heads=2,batch_size=2,replay_capacity=32)
+    t = Trainer(ec,cfg)
+    for _ in range(7):t.step()
+    assert t.episodes == 1 and t.updates > 0
+    assert all(np.isfinite(x) for x in t.last_losses.values())
+    with tempfile.TemporaryDirectory() as folder:
+        path=Path(folder)/"single.pt";t.save(path);restored=Trainer.load(path)
+        assert np.array_equal(t.sac.act(t.env.observation(),True),restored.sac.act(restored.env.observation(),True))
+        result=restored.evaluate(1001,Path(folder)/"eval")
+        assert result["steps"] == result["waypoint_decisions"] == 5
+        assert (Path(folder)/"eval/trajectory.png").exists()
+
+
+def test_no_backlog_ablation_removes_only_independent_negative_term():
+    ec = load_config(ROOT / "configs/env_lower_minimal5.yaml")
+    old_cfg = yaml.safe_load((ROOT / "configs/training_lower_minimal15_greedy.yaml").read_text())
+    cfg = yaml.safe_load((ROOT / "configs/training_lower_minimal15_greedy_noB.yaml").read_text())
+    from train import validate
+    validate(cfg)
+    original, ablation = PersistentEnv(ec, old_cfg), PersistentEnv(ec, cfg)
+    for k in range(15):
+        point = original.scene.sensor_pos[k % 5:k % 5 + 1]
+        action = (point / 300 - 1).astype(np.float32)
+        _, ro, done_o, _ = original.step(action)
+        _, ra, done_a, _ = ablation.step(action)
+        a, b = original.records[-1], ablation.records[-1]
+        assert done_o == done_a
+        assert np.array_equal(original.scene.sensor_backlog, ablation.scene.sensor_backlog)
+        assert b["reward_terms"]["backlog_post"] == 0.
+        assert a["reward_terms"]["all_sensor_clear"] == b["reward_terms"]["all_sensor_clear"]
+        assert a["reward_terms"]["movement"] == b["reward_terms"]["movement"]
+        assert np.isclose(ra - ro, a["max_backlog"] / old_cfg["reward"]["backlog_scale"])
+    cfg["sac"].update(hidden=16,heads=2,batch_size=2,replay_capacity=32)
+    t=Trainer(ec,cfg)
+    for _ in range(3):t.step()
+    assert t.updates > 0 and all(np.isfinite(v) for v in t.last_losses.values())
+    with tempfile.TemporaryDirectory() as folder:
+        path=Path(folder)/"noB.pt";t.save(path);restored=Trainer.load(path)
+        assert restored.cfg["reward"]["backlog_weight"] == 0.
+
+
 if __name__ == "__main__":
     torch.set_num_threads(1)
     names = []

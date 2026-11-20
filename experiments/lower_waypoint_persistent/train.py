@@ -46,11 +46,30 @@ def validate(cfg):
         raise ValueError("group and episode horizons/counts must be integers")
     if not 0 < cfg["short_steps"] < cfg["block_steps"] or cfg["episode_steps"] <= 0:
         raise ValueError("invalid episode/group horizons")
+    if type(cfg.get("continuing_task", False)) is not bool:
+        raise ValueError("continuing_task must be boolean")
+    if cfg.get("continuing_task"):
+        if cfg.get("max_decision_physical_steps") != 1:
+            raise ValueError("continuing experiment currently requires one-step decisions")
+        for key in ("statistics_window_steps", "evaluation_steps", "log_every_windows"):
+            if type(cfg.get(key)) is not int or cfg[key] <= 0:
+                raise ValueError(f"{key} must be a positive integer")
+        if cfg["evaluation_steps"] != 30:
+            raise ValueError("continuing evaluation uses exactly30 steps, in two15-step pages")
+    if type(cfg.get("disable_rotation", False)) is not bool:
+        raise ValueError("disable_rotation must be boolean")
+    limit = cfg.get("max_decision_physical_steps")
+    if limit is not None and (type(limit) is not int or limit <= 0):
+        raise ValueError("max_decision_physical_steps must be a positive integer")
     if cfg["step_sec"] <= 0 or cfg["observation_last_visit_scale_sec"] <= 0:
         raise ValueError("time/input scales must be positive")
     rw, sc = cfg["reward"], cfg["sac"]
+    if rw.get("top_k") is not None and (type(rw["top_k"]) is not int or rw["top_k"] <= 0):
+        raise ValueError("reward.top_k must be a positive integer")
     if rw["backlog_scale"] <= 0 or rw["reference_sec"] <= 0 or not 0 <= rw["rho"] < 1:
         raise ValueError("invalid reward settings")
+    if not np.isfinite(rw.get("backlog_weight", 1.0)) or rw.get("backlog_weight", 1.0) < 0:
+        raise ValueError("backlog_weight must be finite and nonnegative")
     if not np.isfinite(rw.get("movement_weight", 0.0)) or rw.get("movement_weight", 0.0) < 0:
         raise ValueError("movement_weight must be finite and nonnegative")
     if not 0 < sc["gamma_per_reference"] <= 1 or sc["hidden"] % sc["heads"] or sc["alpha"] <= 0:
@@ -125,6 +144,8 @@ def main():
                        save_every=4, plot_every=4, log_every_episodes=1, evaluation_seeds=[1001])
             cfg["sac"].update(hidden=16, heads=2, batch_size=2, replay_capacity=64, learning_starts=2)
         validate(cfg)
+        if cfg.get("continuing_task"):
+            parser.error("use train_continuing.py for continuing-task configurations")
         trainer = Trainer(load_config(args.env_config), cfg, device)
     cfg = trainer.cfg
     validate(cfg)
@@ -164,6 +185,7 @@ def main():
           f"{cfg['episode_steps']} steps/episode, {cfg['step_sec']:g}s/step | seed {cfg['seed']}", flush=True)
     print(f"Output: {output.resolve()}", flush=True)
     print(f"Movement penalty weight: {cfg['reward'].get('movement_weight', 0.0):g} (mean active distance / map diagonal)", flush=True)
+    print(f"Backlog penalty weight: {cfg['reward'].get('backlog_weight', 1.0):g}", flush=True)
     print(f"Hidden activation: {cfg['sac'].get('activation', 'relu')}", flush=True)
     print(f"UAV inputs: x, y, ID" + (", is_active (1=serving, 0=inactive)" if trainer.sac.include_active_status else " (legacy, no status)"), flush=True)
     if trainer.steps == 0:

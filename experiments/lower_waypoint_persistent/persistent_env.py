@@ -15,6 +15,11 @@ class PhysicalSlots:
         self.reset(reset_rng=True)
 
     def _sample_groups(self):
+        if self.cfg.get("disable_rotation", False):
+            self.long_ids = np.arange(self.scene.num_uavs)
+            self.short_ids = np.array([], dtype=np.int64)
+            self.horizons = np.full(self.scene.num_uavs, self.cfg["block_steps"], dtype=np.int64)
+            return
         count = int(self.selection_rng.integers(self.cfg["long_count_min"], self.cfg["long_count_max"] + 1))
         self.long_ids = np.sort(self.selection_rng.choice(self.scene.num_uavs, count, replace=False))
         self.short_ids = np.setdiff1d(np.arange(self.scene.num_uavs), self.long_ids)
@@ -25,6 +30,12 @@ class PhysicalSlots:
         if reset_rng:
             self.selection_rng = np.random.default_rng(self.seed + 2)
         self.scene.reset(reset_rng=reset_rng)
+        fixed = self.cfg.get("fixed_sensor_positions_m")
+        if fixed is not None:
+            positions = np.asarray(fixed, dtype=np.float32)
+            if positions.shape != (self.scene.num_sensors, 2) or not np.isfinite(positions).all() or np.any(positions < 0) or np.any(positions > self.scene.world_size):
+                raise ValueError("fixed sensor positions must match count and map bounds")
+            self.scene.sensor_pos[:] = positions
         self.steps, self.phase, self.done = 0, 0, False
         self.records, self.seen = [], set()
         self._sample_groups()
@@ -71,6 +82,13 @@ class PhysicalSlots:
         collected = np.bincount(owner[union], weights=pre[union], minlength=s.num_uavs)
         total = float(pre.sum())
         fraction = float(pre[union].sum()) / total if total > 0 else 0.0
+        reward_fraction = fraction
+        top_ids = None
+        top_k = cfg["reward"].get("top_k")
+        if top_k is not None:
+            top_ids = np.argsort(-pre, kind="stable")[:min(top_k, s.num_sensors)]
+            denominator = float(pre[top_ids].sum())
+            reward_fraction = float(pre[top_ids][union[top_ids]].sum()) / denominator if denominator > 0 else 0.0
         s.sensor_backlog[union] = 0
         s.sensor_last_visit_sec[union] = 0
         b_after = float(s.sensor_backlog.max())
@@ -79,13 +97,13 @@ class PhysicalSlots:
         move_by_uav = np.zeros(s.num_uavs, dtype=np.float32)
         move_by_uav[ids] = move
         movement_cost = -float(rw.get("movement_weight", 0.0)) * float(move.mean()) / (s.world_size * np.sqrt(2))
-        terms = dict(backlog_post=-b_after / rw["backlog_scale"],
-                     all_sensor_clear=rw["rho"] * b_after / rw["backlog_scale"] * fraction,
+        terms = dict(backlog_post=-float(rw.get("backlog_weight", 1.0)) * b_after / rw["backlog_scale"],
+                     all_sensor_clear=rw["rho"] * b_after / rw["backlog_scale"] * reward_fraction,
                      movement=movement_cost)
         self.seen.update(np.flatnonzero(union).tolist())
         self.steps += 1; self.phase += 1
         s.now_sec = self.steps * cfg["step_sec"]
-        self.done = self.steps >= cfg["episode_steps"]
+        self.done = not cfg.get("continuing_task", False) and self.steps >= cfg["episode_steps"]
         outer = np.linalg.norm(s.sensor_pos - s.airship_pos, axis=1) > self.env_cfg["sensors"]["partition_radius_m"]
         row = dict(step=self.steps, block=(self.steps - 1) // cfg["block_steps"] + 1,
                    step_in_block=self.phase, active_ids=ids.tolist(), long_ids=long_ids.tolist(), short_ids=short_ids.tolist(),
@@ -100,6 +118,8 @@ class PhysicalSlots:
                    sensor_coverage_fraction=len(self.seen) / s.num_sensors,
                    outer_visited=int(sum(outer[list(self.seen)])) if self.seen else 0,
                    duration_sec=float(cfg["step_sec"]), end_sec=float(s.now_sec), done=self.done)
+        if top_ids is not None:
+            row.update(reward_clear_fraction=reward_fraction, reward_topk_sensor_ids=top_ids.tolist())
         self.records.append(row)
         if self.phase == cfg["block_steps"] and not self.done:
             self.phase = 0
@@ -178,8 +198,10 @@ class PersistentEnv(PhysicalSlots):
             weight *= gamma
             reached = np.linalg.norm(self.scene.uav_pos[ids] - targets, axis=1) <= self.cfg["arrival_tolerance_m"]
             changed = not np.array_equal(ids, self.observation()["ids"]) or self.phase == 0
-            if done or changed or reached.all():
-                reason = "episode_end" if done else "group_change" if changed else "all_arrived"
+            limit = self.cfg.get("max_decision_physical_steps")
+            decision_limit = limit is not None and len(physical) >= limit
+            if done or changed or reached.all() or decision_limit:
+                reason = "episode_end" if done else "group_change" if changed else "all_arrived" if reached.all() else "decision_limit"
                 break
             if len(physical) > self.cfg["block_steps"]:
                 raise RuntimeError("persistent interval missed a mandatory group boundary")

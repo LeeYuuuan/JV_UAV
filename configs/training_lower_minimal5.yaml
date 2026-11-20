@@ -1,0 +1,64 @@
+revision: minimal_1uav_5sensors_5steps_v1
+seed: 43
+total_steps: 20000
+episode_steps: 5
+step_sec: 60.0
+block_steps: 5
+short_steps: 1
+long_count_min: 1
+long_count_max: 1
+observation_last_visit_scale_sec: 6000.0
+arrival_tolerance_m: 0.01
+updates_per_physical_step: 1
+reward:
+  backlog_scale: 300.0
+  reference_sec: 60.0
+  rho: 0.5
+  movement_weight: 0.02
+exploration:
+  epsilon_start: 0.0
+  epsilon_end: 0.0
+  decay_physical_steps: 100000
+  random_probability: 0.25
+  greedy_probability: 0.5
+  actor_probability: 0.25
+  random_region: sensor_union
+  greedy_jitter_m: 0.0
+  candidate_count: 6
+sac:
+  include_active_status: true
+  hidden: 128
+  heads: 4
+  lr: 0.0003
+  gamma_per_reference: 0.95
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  replay_capacity: 100000
+  learning_starts: 0
+  max_grad_norm: 1.0
+  activation: gelu
+eval_every: 1000
+full_eval_every: 1000
+save_every: 1000
+plot_every: 1000
+log_every_episodes: 100
+trace_every_steps: 5
+evaluation_seeds:
+- 1001
+- 1002
+- 1003
+disable_rotation: true
+max_decision_physical_steps: 1
+fixed_sensor_positions_m:
+- - 440.0
+  - 300.0
+- - 343.26237921249265
+  - 433.1479122813215
+- - 186.73762078750735
+  - 382.28993532094626
+- - 186.73762078750735
+  - 217.71006467905377
+- - 343.2623792124926
+  - 166.8520877186785
