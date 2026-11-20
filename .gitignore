@@ -32,3 +32,19 @@ events.out.tfevents.*
 !.env.example
 .DS_Store
 Thumbs.db
+
+/agent_tests/
+
+/download/
+
+# Temporary atomic output files
+*.tmp
+
+# Generated diagnostics and experiment data (not runtime inputs)
+/experiments/**/verification/
+/experiments/joint_topk/*_audit.json
+/experiments/joint_topk/*_verified.json
+/tests/*.png
+*.jsonl
+*.jsonl.gz
+*.npz

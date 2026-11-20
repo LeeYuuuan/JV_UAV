@@ -1,1 +1,0 @@
-Last-visit observable-only v2 verification. Earlier privileged-backlog v1 reference metrics are superseded. Reference policies are evaluation controls, not trained convergence evidence. Actual queues are retained only inside the simulator for reward/evaluation.
