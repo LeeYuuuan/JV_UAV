@@ -213,7 +213,8 @@ def test_inactive_context_and_noncontiguous_action_id_packing():
     assert packed["mask"][0].tolist() == [False, True, False, True, False, True]
     assert packed["context_mask"].all()
     assert np.allclose(packed["uavs"][0, :, :2], env.scene.uav_pos / 4000)
-    assert packed["uavs"].shape[-1] == 3
+    assert packed["uavs"].shape[-1] == 4
+    assert packed["uavs"][0, :, 3].tolist() == [0, 1, 0, 1, 0, 1]
     actual = np.array([[.1, .2], [.3, .4], [.5, .6]], np.float32)
     captured = []
     def hook(module, args):
@@ -236,7 +237,8 @@ def test_observable_only_policy_critic_replay_and_teacher_inputs():
     before = trainer.sac.pack([obs])
     expected_sensor = np.column_stack([env.scene.sensor_pos / 4000, env.scene.sensor_last_visit_sec / 6000])
     assert np.allclose(before["sensors"][0], expected_sensor)
-    assert before["uavs"].shape[-1] == 3
+    assert before["uavs"].shape[-1] == 4
+    assert before["uavs"][0, :, 3].tolist() == [1] * 6
     assert trainer.sac.critic.q1.head[0].in_features == cfg["sac"]["hidden"]
     env.scene.sensor_backlog[:] = np.arange(env.scene.num_sensors) * 10000
     env.scene.now_sec += 12345
@@ -330,6 +332,53 @@ def test_legacy_random_sampling_and_jitter_config_preserved():
     sampler = WaypointSampler(old, ec, 123)
     expected = (np.random.default_rng(123).uniform(-1, 1, 2) + 1) * (sampler.size / 2)
     assert np.array_equal(sampler.random_target(np.array([[0., 0.]])), expected)
+
+
+def test_status_changes_are_visible_to_actor_and_both_critics():
+    ec, cfg = configs(True); t = Trainer(ec, cfg)
+    obs = t.env.observation(); other = copy.deepcopy(obs)
+    other["ids"] = np.array([1, 3, 5])
+    other["positions"] = other["all_positions"][other["ids"]].copy()
+    a, b = t.sac.pack([obs]), t.sac.pack([other])
+    assert torch.equal(a["sensors"], b["sensors"])
+    assert torch.equal(a["uavs"][..., :3], b["uavs"][..., :3])
+    assert b["uavs"][0, :, 3].tolist() == [0, 1, 0, 1, 0, 1]
+    assert t.sac.actor.encoder.uav.in_features == 4
+    assert t.sac.critic.q1.encoder.uav.in_features == 6
+    assert t.sac.critic.q2.encoder.uav.in_features == 6
+    with torch.no_grad():
+        ma, _ = t.sac.actor.distribution(a); mb, _ = t.sac.actor.distribution(b)
+        assert not torch.allclose(ma[0, 1], mb[0, 1])
+        zero = torch.zeros(1, 6, 2)
+        qa = t.sac.critic(a, zero); qb = t.sac.critic(b, zero)
+        assert all(not torch.allclose(x, y) for x, y in zip(qa, qb))
+
+
+def test_replay_retains_historical_status_and_next_group_status():
+    ec, cfg = configs(True); t = Trainer(ec, cfg)
+    obs = t.env.observation()
+    # First interval crosses the short group's service horizon.
+    future, r, end, row = t.env.step(np.ones((6, 2), np.float32))
+    assert row["stop_reason"] == "group_change"
+    t.replay.add(obs, np.ones((6, 2), np.float32), r, future, end, row["duration_sec"])
+    old, _, _, nxt, _, _ = t.replay.items[0]
+    packed_old, packed_next = t.sac.pack([old]), t.sac.pack([nxt])
+    assert packed_old["uavs"][0, :, 3].sum() == 6
+    assert torch.equal(packed_next["uavs"][0, :, 3].bool(), packed_next["mask"][0])
+    assert packed_next["uavs"][0, :, 3].sum() in (3, 4)
+    t.env.reset()
+    assert torch.equal(packed_next["uavs"], t.sac.pack([nxt])["uavs"])
+
+
+def test_legacy_without_status_checkpoint_loads_without_silent_conversion():
+    ec, cfg = configs(True); cfg["sac"].pop("include_active_status")
+    t = Trainer(ec, cfg)
+    assert t.sac.pack([t.env.observation()])["uavs"].shape[-1] == 3
+    expected = t.sac.act(t.env.observation(), deterministic=True)
+    with tempfile.TemporaryDirectory() as folder:
+        p = Path(folder) / "legacy.pt"; t.save(p); restored = Trainer.load(p)
+        assert not restored.sac.include_active_status
+        assert np.array_equal(expected, restored.sac.act(restored.env.observation(), deterministic=True))
 
 
 if __name__ == "__main__":

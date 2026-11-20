@@ -1,3 +1,17 @@
+# Active-status observation update (2026-11-20)
+
+New runs include per-UAV `is_active`: 1 means currently serving, 0 means inactive.
+This is an actual fourth input feature to actor and both Q encoders; output masks
+remain separate execution constraints. All six UAVs remain attention context.
+Critic tokens contain these four fields plus two action coordinates.
+Current and next replay inputs derive status from their own saved active-ID lists;
+they never consult the current environment group. Eval diagnostics log all six flags.
+No remaining horizon, true backlog, charge state, or future schedule was added.
+Gamma, reward, exploration, speed and 20/10 service timing are unchanged.
+Start a fresh run for status-enabled training: historical three-feature checkpoints
+remain loadable only with their original saved configuration and network dimensions.
+New active checkpoints use format persistent_waypoint_lastvisit_active_v3.
+
 # Persistent waypoints with real speed and epsilon mixture
 
 Revision `lower_persistent_lastvisit_sensor_union_v4`, 2026-11-19.
@@ -61,11 +75,11 @@ is deterministic, not the exact mathematical mean of a tanh-normal distribution.
 
 All6 fleet tokens remain visible as attention context, including inactive UAV
 positions needed when they reactivate. A token is indexed by its physical UAV ID:
-`[x/4000,y/4000,ID/5]`. Sensor tokens are `[x/4000,y/4000,last_visit_age_sec/6000]`.
+`[x/4000,y/4000,ID/5,is_active]`. Sensor tokens are `[x/4000,y/4000,last_visit_age_sec/6000]`.
 Only active tokens generate actions/log-probabilities. Replay actions are packed
 by physical ID, not by the order of a changing active subset. No SOC, remaining
-service horizon, episode time, explicit active flag or active count is a numeric
-input. The active-ID set is used only for legal action/entropy masks. Critic
+service horizon, episode time, active count is a numeric
+input. The binary is_active feature IS a numeric input to both actor and critics. The active-ID set is used only for legal action/entropy masks. Critic
 heads no longer concatenate active_count/fleet_size. Actor and critic share the
 same observable-only state schema; replay whitelists these observable fields.
 

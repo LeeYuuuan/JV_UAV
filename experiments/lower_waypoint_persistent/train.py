@@ -57,6 +57,8 @@ def validate(cfg):
         raise ValueError("invalid SAC discount/architecture/alpha")
     if sc["batch_size"] <= 0 or sc["replay_capacity"] < sc["batch_size"]:
         raise ValueError("invalid replay batch/capacity")
+    if type(sc.get("include_active_status", False)) is not bool:
+        raise ValueError("include_active_status must be boolean")
     if sc.get("activation", "relu") not in ("relu", "gelu"):
         raise ValueError("SAC activation must be relu or gelu")
     if type(cfg["updates_per_physical_step"]) is not int or cfg["updates_per_physical_step"] <= 0 or cfg["arrival_tolerance_m"] <= 0:
@@ -163,6 +165,7 @@ def main():
     print(f"Output: {output.resolve()}", flush=True)
     print(f"Movement penalty weight: {cfg['reward'].get('movement_weight', 0.0):g} (mean active distance / map diagonal)", flush=True)
     print(f"Hidden activation: {cfg['sac'].get('activation', 'relu')}", flush=True)
+    print(f"UAV inputs: x, y, ID" + (", is_active (1=serving, 0=inactive)" if trainer.sac.include_active_status else " (legacy, no status)"), flush=True)
     if trainer.steps == 0:
         evaluate(True, baselines=True)
     started = time.monotonic()

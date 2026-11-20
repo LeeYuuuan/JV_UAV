@@ -1,0 +1,84 @@
+{
+  "decision": 10,
+  "start_physical_step": 77,
+  "end_physical_step": 80,
+  "physical_steps": 3,
+  "duration_sec": 180.0,
+  "active_ids": [
+    3,
+    4,
+    5
+  ],
+  "action": [
+    [
+      -0.9085648059844971,
+      0.1146162748336792
+    ],
+    [
+      0.1369917392730713,
+      -0.025743722915649414
+    ],
+    [
+      -0.20885014533996582,
+      0.3011953830718994
+    ]
+  ],
+  "target_positions": [
+    [
+      182.87039184570312,
+      2229.232666015625
+    ],
+    [
+      2273.9833984375,
+      1948.5125732421875
+    ],
+    [
+      1582.2996826171875,
+      2602.390869140625
+    ]
+  ],
+  "reached_ids": [],
+  "interrupted_ids": [
+    3,
+    4,
+    5
+  ],
+  "stop_reason": "group_change",
+  "reward": -23.673198653217337,
+  "raw_reward_sum": -24.908575854975872,
+  "reward_terms": {
+    "backlog_post": -23.67138333333333,
+    "all_sensor_clear": 0.0,
+    "movement": -0.001815319884001164
+  },
+  "collected_packets": 0.0,
+  "done": false,
+  "epsilon": 0.624907,
+  "sources": [
+    "actor",
+    "actor",
+    "actor"
+  ],
+  "greedy_sensor_ids": [
+    -1,
+    -1,
+    -1
+  ],
+  "training_steps": 41680,
+  "waypoint_decisions": 4952,
+  "sac_updates": 39430,
+  "episode": 209,
+  "losses": {
+    "actor_loss": 99.693359375,
+    "policy_loss": 96.76886749267578,
+    "entropy_loss": 2.9244956970214844,
+    "critic_loss": 10.113184928894043,
+    "alpha": 0.29852327704429626,
+    "alpha_loss": 0.5463135242462158,
+    "q_mean": -96.76886749267578,
+    "target_mean": -107.17282104492188,
+    "reward_mean": -44.606651306152344,
+    "discount_mean": 0.60904860496521,
+    "input_last_visit_abs_max": 1.7100000381469727
+  }
+}

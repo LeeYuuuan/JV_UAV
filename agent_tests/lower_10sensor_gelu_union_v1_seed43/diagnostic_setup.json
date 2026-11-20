@@ -1,0 +1,52 @@
+{
+  "sensor_positions": [
+    [
+      512.4545288085938,
+      1801.543701171875
+    ],
+    [
+      3044.558837890625,
+      3144.25732421875
+    ],
+    [
+      1773.65673828125,
+      908.9548950195312
+    ],
+    [
+      2575.46044921875,
+      3291.04638671875
+    ],
+    [
+      376.7093811035156,
+      3902.489501953125
+    ],
+    [
+      1483.192138671875,
+      3707.06005859375
+    ],
+    [
+      3310.524658203125,
+      2526.65771484375
+    ],
+    [
+      3434.3916015625,
+      2789.47216796875
+    ],
+    [
+      2218.339111328125,
+      255.26902770996094
+    ],
+    [
+      3032.35107421875,
+      1418.1038818359375
+    ]
+  ],
+  "device_available": "cuda",
+  "first_transition_reward": -4.893609047331397,
+  "purpose": "Agent diagnostic; ten uniform sensors on original 4000m world; unchanged SAC/reward/exploration schedule.",
+  "changes": [
+    "sensor count and distribution",
+    "100000-step initial run budget"
+  ],
+  "first_transition_physical_steps": 10
+}

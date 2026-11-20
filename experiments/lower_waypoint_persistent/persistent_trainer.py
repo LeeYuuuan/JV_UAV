@@ -91,7 +91,7 @@ class Trainer:
         return summary
 
     def save(self, path):
-        state = dict(format="persistent_waypoint_lastvisit_v2", env_cfg=self.env_cfg, cfg=self.cfg,
+        state = dict(format="persistent_waypoint_lastvisit_active_v3" if self.sac.include_active_status else "persistent_waypoint_lastvisit_v2", env_cfg=self.env_cfg, cfg=self.cfg,
                      sac=self.sac.state_dict(), replay=self.replay.state_dict(), env=self.env.state_dict(),
                      steps=self.steps, decisions=self.decisions, updates=self.updates, episodes=self.episodes,
                      history=self.history, loss_history=self.loss_history, last_losses=self.last_losses,
@@ -103,8 +103,11 @@ class Trainer:
     @classmethod
     def load(cls, path, device="cpu"):
         state = torch.load(path, map_location="cpu", weights_only=False)
-        if state.get("format") != "persistent_waypoint_lastvisit_v2":
+        if state.get("format") not in ("persistent_waypoint_lastvisit_v2", "persistent_waypoint_lastvisit_active_v3"):
             raise ValueError("not an observable last-visit v2 checkpoint; old backlog-input weights/replay are incompatible")
+        active = state["cfg"]["sac"].get("include_active_status", False)
+        if (state["format"] == "persistent_waypoint_lastvisit_active_v3") != active:
+            raise ValueError("checkpoint format and active-status input configuration disagree")
         obj = cls(state["env_cfg"], state["cfg"], device)
         obj.sac.load_state_dict(state["sac"]); obj.replay.load_state_dict(state["replay"])
         obj.env.load_state_dict(state["env"]); obj.sampler.load_state_dict(state["sampler"])

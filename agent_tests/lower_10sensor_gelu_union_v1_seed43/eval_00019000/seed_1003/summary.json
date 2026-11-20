@@ -1,0 +1,33 @@
+{
+  "steps": 200,
+  "simulation_sec": 12000.0,
+  "lower_return": -2034.964361073979,
+  "lower_discounted_return": -44.92298060597129,
+  "reward_terms": {
+    "all_sensor_clear": 10.843854042367447,
+    "backlog_post": -2045.7266666666667,
+    "movement": -0.08154844967983157
+  },
+  "mean_max_backlog": 3068.59,
+  "peak_max_backlog": 5959.0,
+  "mean_sensor_backlog": 1541.2574996566773,
+  "sensor_coverage_fraction": 0.9,
+  "outer_visited": 1,
+  "collected_packets": 34612.0,
+  "collection_rate_packets_sec": 2.884333333333333,
+  "collection_steps": 38,
+  "collected_but_zero_bonus_steps": 0,
+  "mean_clear_fraction": 0.00995551691261243,
+  "mean_step_move_m": 115.32692275784086,
+  "mean_uav_move_m": 113.05612371776903,
+  "total_move_m": 107403.31753188065,
+  "uav_decisions": 950,
+  "waypoint_decisions": 45,
+  "mean_commitment_steps": 4.444444444444445,
+  "interrupted_targets": 50,
+  "seed": 1003,
+  "training_steps": 19000,
+  "sac_updates": 16750,
+  "total_waypoint_decisions": 2234,
+  "policy_mode": "policy"
+}

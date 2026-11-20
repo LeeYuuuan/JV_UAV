@@ -1,4 +1,4 @@
-revision: lower_persistent_lastvisit_gelu_sensor_union_v4
+revision: lower_persistent_lastvisit_active_gelu_union_v5
 seed: 43
 total_steps: 500000
 episode_steps: 200
@@ -26,6 +26,7 @@ exploration:
   greedy_jitter_m: 0.0
   candidate_count: 6
 sac:
+  include_active_status: true
   hidden: 128
   heads: 4
   lr: 0.0003

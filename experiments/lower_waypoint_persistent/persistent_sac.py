@@ -19,10 +19,10 @@ def hidden_activation(name):
 
 
 class Encoder(nn.Module):
-    def __init__(self, hidden, heads, action=False, activation="relu"):
+    def __init__(self, hidden, heads, action=False, activation="relu", uav_features=3):
         super().__init__()
         self.sensor = nn.Sequential(nn.Linear(3, hidden), hidden_activation(activation), nn.Linear(hidden, hidden))
-        self.uav = nn.Linear(3 + (2 if action else 0), hidden)
+        self.uav = nn.Linear(uav_features + (2 if action else 0), hidden)
         self.cross = nn.MultiheadAttention(hidden, heads, dropout=0.0, batch_first=True)
         self.norm = nn.LayerNorm(hidden)
         layer = nn.TransformerEncoderLayer(hidden, heads, hidden * 2, dropout=0.0,
@@ -41,9 +41,9 @@ class Encoder(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self, hidden, heads, activation="relu"):
+    def __init__(self, hidden, heads, activation="relu", uav_features=3):
         super().__init__()
-        self.encoder = Encoder(hidden, heads, activation=activation)
+        self.encoder = Encoder(hidden, heads, activation=activation, uav_features=uav_features)
         self.mean = nn.Linear(hidden, 2)
         self.log_std = nn.Linear(hidden, 2)
 
@@ -61,9 +61,9 @@ class Actor(nn.Module):
 
 
 class Q(nn.Module):
-    def __init__(self, hidden, heads, fleet, activation="relu"):
+    def __init__(self, hidden, heads, fleet, activation="relu", uav_features=3):
         super().__init__()
-        self.encoder = Encoder(hidden, heads, action=True, activation=activation)
+        self.encoder = Encoder(hidden, heads, action=True, activation=activation, uav_features=uav_features)
         self.head = nn.Sequential(nn.Linear(hidden, hidden), hidden_activation(activation), nn.Linear(hidden, 1))
         self.fleet = fleet
 
@@ -94,8 +94,11 @@ class PersistentSAC:
         self.gamma = cfg["gamma_per_reference"]
         self.reference_sec = env.cfg["reward"]["reference_sec"]
         activation = cfg.get("activation", "relu")
-        self.actor = Actor(cfg["hidden"], cfg["heads"], activation).to(device)
-        self.critic = TwinQ(cfg["hidden"], cfg["heads"], self.fleet, activation).to(device)
+        # Missing config key preserves historical three-feature checkpoints.
+        self.include_active_status = cfg.get("include_active_status", False)
+        self.uav_features = 4 if self.include_active_status else 3
+        self.actor = Actor(cfg["hidden"], cfg["heads"], activation, self.uav_features).to(device)
+        self.critic = TwinQ(cfg["hidden"], cfg["heads"], self.fleet, activation, self.uav_features).to(device)
         self.target = copy.deepcopy(self.critic).requires_grad_(False)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg["lr"])
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg["lr"])
@@ -106,7 +109,7 @@ class PersistentSAC:
         n = len(observations)
         sensors = np.zeros((n, len(self.sensor_xy), 3), np.float32)
         sensors[:, :, :2] = self.sensor_xy
-        uavs = np.zeros((n, self.fleet, 3), np.float32)
+        uavs = np.zeros((n, self.fleet, self.uav_features), np.float32)
         mask = np.zeros((n, self.fleet), bool)
         for i, obs in enumerate(observations):
             sensors[i, :, 2] = obs["sensor_last_visit_sec"] / self.scale
@@ -115,6 +118,10 @@ class PersistentSAC:
             uavs[i, :, :2] = obs["all_positions"] / self.size
             uavs[i, :, 2] = np.arange(self.fleet) / max(self.fleet - 1, 1)
             mask[i, obs["ids"]] = True
+            if self.include_active_status:
+                # The same historical active IDs drive network input and legal
+                # action masks. Replay never consults the live environment here.
+                uavs[i, :, 3] = mask[i].astype(np.float32)
         return {key: torch.as_tensor(value, device=self.device) for key, value in
                 dict(sensors=sensors, uavs=uavs, mask=mask, context_mask=np.ones_like(mask)).items()}
 
@@ -130,7 +137,9 @@ class PersistentSAC:
         ids = torch.as_tensor(obs["ids"], dtype=torch.long, device=self.device)
         mean = mean[0, ids]; sigma = log_std[0, ids].exp()
         return dict(mu=mean.cpu().tolist(), sigma=sigma.cpu().tolist(),
-                    deterministic_action=mean.tanh().cpu().tolist())
+                    deterministic_action=mean.tanh().cpu().tolist(),
+                    uav_is_active=np.isin(np.arange(self.fleet), obs["ids"]).astype(int).tolist(),
+                    active_status_in_network=self.include_active_status)
 
     def update(self, transitions):
         obs, actions, rewards, future, done, duration = zip(*transitions)
