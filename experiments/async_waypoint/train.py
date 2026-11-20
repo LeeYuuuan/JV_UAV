@@ -20,6 +20,8 @@ from plots import curves, write_json
 
 
 def validate(env_cfg, cfg):
+    if cfg.get("lower_update_mode", "per_transition") not in ("per_transition", "matched_upper"):
+        raise ValueError("unknown lower update mode")
     energy = env_cfg["energy"]
     for key in ("horizontal_power_w", "hover_power_w", "climb_power_w", "charging_power_w", "horizontal_speed_mps", "climb_speed_mps"):
         if not np.isfinite(energy[key]) or energy[key] <= 0:
@@ -84,6 +86,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--upper-steps", type=int, help="Additional upper intervals; every1024 intervals triggers one PPO update")
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--lower-update-mode", choices=["per_transition", "matched_upper"],
+                        help="Explicit cadence override; also supported for checkpoint continuation")
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--smoke", action="store_true")
@@ -102,6 +106,11 @@ def main():
         trainer = Trainer.load(args.resume, device)
         if args.seed is not None and args.seed != trainer.cfg["seed"]:
             parser.error("resume seed must match")
+        if args.lower_update_mode is not None and args.lower_update_mode != trainer.cfg["lower_update_mode"]:
+            trainer.cfg["lower_update_mode"] = args.lower_update_mode
+            trainer.env.cfg["lower_update_mode"] = args.lower_update_mode
+            trainer.cfg["revision"] = "async_waypoint_600s_matched_v2" if args.lower_update_mode == "matched_upper" else "async_waypoint_600s_per_transition_v2"
+            trainer.env.cfg["revision"] = trainer.cfg["revision"]
         if (output / "live_status.json").exists():
             previous = json.loads((output / "live_status.json").read_text())
             if previous["upper_steps"] > trainer.upper_steps:
@@ -110,6 +119,9 @@ def main():
         cfg = yaml.safe_load(args.train_config.read_text(encoding="utf-8")); ec = load_config(args.env_config)
         if args.seed is not None:
             cfg["seed"] = args.seed
+        if args.lower_update_mode is not None:
+            cfg["lower_update_mode"] = args.lower_update_mode
+            cfg["revision"] = "async_waypoint_600s_matched_v2" if args.lower_update_mode == "matched_upper" else "async_waypoint_600s_per_transition_v2"
         if args.smoke:
             cfg.update(episode_sec=180.0, upper_period_sec=60.0, total_upper_steps=8, upper_rollout_steps=4,
                        eval_every_upper=4, full_eval_every_upper=4, save_every_upper=4, evaluation_seeds=[1001])
@@ -145,7 +157,7 @@ def main():
 
     steps = args.upper_steps or cfg["total_upper_steps"]
     print(f"Async hierarchical waypoint | {cfg['revision']} | {device} | upper period {cfg['upper_period_sec']}s | "
-          f"additional intervals {steps} | rollout {cfg['upper_rollout_steps']}", flush=True)
+          f"additional intervals {steps} | rollout {cfg['upper_rollout_steps']} | lower updates {cfg['lower_update_mode']}", flush=True)
     print(f"Output: {output.resolve()}", flush=True)
     if trainer.upper_steps == 0:
         evaluate(True)

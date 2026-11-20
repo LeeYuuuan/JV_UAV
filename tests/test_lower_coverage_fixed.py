@@ -104,7 +104,8 @@ def test_no_energy_constraints_and_full_map_targets():
     assert not done and row["collected_packets"] > 0
     assert np.all(env.scene.uav_pos == 4000)
     assert "soc" not in env.observation()
-    assert set(row["reward_terms"]) == {"backlog_post", "all_sensor_clear"}
+    assert set(row["reward_terms"]) == {"backlog_post", "all_sensor_clear", "movement"}
+    assert row["reward_terms"]["movement"] == 0
 
 
 def test_inputs_contain_map_backlog_identity_and_remaining_service():
@@ -239,6 +240,45 @@ def test_invalid_actions_and_zero_backlog_are_handled():
             pass
     _, reward, _, row = env.step(np.zeros((6, 2), np.float32))
     assert reward == 0 and row["cleared_fraction"] == 0
+
+
+def test_movement_penalty_changes_reward_only_and_logs_actual_distance():
+    ec, cfg = configs()
+    base = CoverageEnv(ec, cfg)
+    other_cfg = copy.deepcopy(cfg)
+    other_cfg["reward"]["movement_weight"] = .02
+    penalized = CoverageEnv(ec, other_cfg)
+    for value, expected_distance in [(1.0, 2000 * np.sqrt(2)), (-1.0, 4000 * np.sqrt(2)), (-1.0, 0.0)]:
+        action = np.full((len(base.observation()["ids"]), 2), value, np.float32)
+        _, ra, _, a = base.step(action)
+        _, rb, _, b = penalized.step(action)
+        expected_cost = -.02 * expected_distance / (4000 * np.sqrt(2))
+        assert np.isclose(b["mean_move_m"], expected_distance)
+        assert np.isclose(b["reward_terms"]["movement"], expected_cost)
+        assert np.isclose(rb - ra, expected_cost)
+        assert a["collected_packets"] == b["collected_packets"]
+        assert np.array_equal(base.scene.sensor_backlog, penalized.scene.sensor_backlog)
+        assert np.array_equal(base.scene.uav_pos, penalized.scene.uav_pos)
+    summary = penalized.summary()
+    assert np.isclose(summary["reward_terms"]["movement"], -.03)
+    assert np.isclose(summary["lower_return"], sum(summary["reward_terms"].values()))
+
+
+def test_movement_penalty_averages_active_uavs_only():
+    ec, cfg = configs()
+    cfg["reward"]["movement_weight"] = .02
+    first, later = CoverageEnv(ec, cfg), CoverageEnv(ec, cfg)
+    for _ in range(10):
+        later.step(np.zeros((len(later.observation()["ids"]), 2), np.float32))
+    assert len(later.observation()["ids"]) in (3, 4)
+    # Same1000m move per active UAV, despite different team sizes.
+    action_first = np.tile([.5, 0], (6, 1)).astype(np.float32)
+    action_later = np.tile([.5, 0], (len(later.observation()["ids"]), 1)).astype(np.float32)
+    _, _, _, a = first.step(action_first)
+    _, _, _, b = later.step(action_later)
+    assert np.isclose(a["reward_terms"]["movement"], b["reward_terms"]["movement"])
+    assert np.isclose(b["mean_move_m"], 1000)
+    assert all(b["move_distance_by_uav_m"][i] == 0 for i in later.short_ids)
 
 
 if __name__ == "__main__":

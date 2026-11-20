@@ -51,6 +51,8 @@ def validate(cfg):
     rw, sc = cfg["reward"], cfg["sac"]
     if rw["backlog_scale"] <= 0 or rw["reference_sec"] <= 0 or not 0 <= rw["rho"] < 1:
         raise ValueError("invalid reward settings")
+    if not np.isfinite(rw.get("movement_weight", 0.0)) or rw.get("movement_weight", 0.0) < 0:
+        raise ValueError("movement_weight must be finite and nonnegative")
     if not 0 < sc["gamma_per_reference"] <= 1 or sc["hidden"] % sc["heads"] or sc["alpha"] <= 0:
         raise ValueError("invalid SAC discount/architecture/alpha")
     if sc["batch_size"] <= 0 or sc["replay_capacity"] < sc["batch_size"]:
@@ -144,6 +146,7 @@ def main():
     print(f"Fixed-slot coverage SAC | revision {cfg['revision']} | device {device} | additional decisions {target_steps} | "
           f"{cfg['episode_steps']} steps/episode, {cfg['step_sec']:g}s/step | seed {cfg['seed']}", flush=True)
     print(f"Output: {output.resolve()}", flush=True)
+    print(f"Movement penalty weight: {cfg['reward'].get('movement_weight', 0.0):g} (mean active distance / map diagonal)", flush=True)
     if trainer.steps == 0:
         evaluate(True, baselines=True)
     started = time.monotonic()

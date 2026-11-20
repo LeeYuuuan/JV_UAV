@@ -71,8 +71,13 @@ class CoverageEnv:
         s.sensor_last_visit_sec[union] = 0
         b_after = float(s.sensor_backlog.max())
         rw = cfg["reward"]
+        move = np.linalg.norm(target - start[ids], axis=1)
+        move_by_uav = np.zeros(s.num_uavs, dtype=np.float32)
+        move_by_uav[ids] = move
+        movement_cost = -float(rw.get("movement_weight", 0.0)) * float(move.mean()) / (s.world_size * np.sqrt(2))
         terms = dict(backlog_post=-b_after / rw["backlog_scale"],
-                     all_sensor_clear=rw["rho"] * b_after / rw["backlog_scale"] * fraction)
+                     all_sensor_clear=rw["rho"] * b_after / rw["backlog_scale"] * fraction,
+                     movement=movement_cost)
         self.seen.update(np.flatnonzero(union).tolist())
         self.steps += 1; self.phase += 1
         s.now_sec = self.steps * cfg["step_sec"]
@@ -81,6 +86,7 @@ class CoverageEnv:
         row = dict(step=self.steps, block=(self.steps - 1) // cfg["block_steps"] + 1,
                    step_in_block=self.phase, active_ids=ids.tolist(), long_ids=long_ids.tolist(), short_ids=short_ids.tolist(),
                    action=action.tolist(), waypoints=target.tolist(), positions_start=start.tolist(), positions_end=s.uav_pos.tolist(),
+                   move_distance_by_uav_m=move_by_uav.tolist(), mean_move_m=float(move.mean()), total_move_m=float(move.sum()),
                    covered_ids=np.flatnonzero(union).tolist(), collected_by_uav=collected.tolist(),
                    collected_packets=float(collected.sum()), pre_backlog_total=total,
                    pre_backlog_max=float(pre.max()), cleared_fraction=fraction,
@@ -98,7 +104,9 @@ class CoverageEnv:
     def summary(self):
         rows = self.records
         duration = self.steps * self.cfg["step_sec"]
-        terms = {key: sum(r["reward_terms"][key] for r in rows) for key in rows[0]["reward_terms"]}
+        keys = sorted({key for r in rows for key in r["reward_terms"]})
+        terms = {key: sum(r["reward_terms"].get(key, 0.0) for r in rows) for key in keys}
+        moves = [np.linalg.norm(np.asarray(r["positions_end"])[r["active_ids"]] - np.asarray(r["positions_start"])[r["active_ids"]], axis=1) for r in rows]
         gamma = self.cfg["sac"]["gamma_per_reference"] ** (self.cfg["step_sec"] / self.cfg["reward"]["reference_sec"])
         positive = [r for r in rows if r["collected_packets"] > 0]
         return dict(steps=self.steps, simulation_sec=duration, lower_return=sum(r["reward"] for r in rows),
@@ -112,6 +120,9 @@ class CoverageEnv:
                     collection_steps=len(positive),
                     collected_but_zero_bonus_steps=sum(r["reward_terms"]["all_sensor_clear"] == 0 for r in positive),
                     mean_clear_fraction=float(np.mean([r["cleared_fraction"] for r in rows])),
+                    mean_step_move_m=float(np.mean([x.mean() for x in moves])),
+                    mean_uav_move_m=float(np.concatenate(moves).mean()),
+                    total_move_m=float(sum(x.sum() for x in moves)),
                     uav_decisions=sum(len(r["active_ids"]) for r in rows))
 
     def state_dict(self):

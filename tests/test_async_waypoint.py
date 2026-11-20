@@ -423,6 +423,44 @@ def test_replay_copy_cyclic_overwrite_and_sampler_resume():
         pass
 
 
+def test_matched_lower_updates_only_once_after_each_full_upper_rollout():
+    ec, cfg = tiny(); cfg["lower_update_mode"] = "matched_upper"
+    t = Trainer(ec, cfg)
+    for _ in range(3):
+        row = t.step()
+        assert t.lower_updates == t.upper_updates == 0
+        assert not row["lower_paired_update"]
+    assert len(t.replay.rows) > 0
+    row = t.step()
+    assert row["upper_updated"] and row["lower_paired_update"]
+    assert t.upper_updates == t.lower_updates == 1
+    for _ in range(8):
+        t.step()
+    assert t.upper_updates == t.lower_updates == 3
+
+
+def test_matched_warmup_skip_has_no_catch_up_updates():
+    ec, cfg = tiny(); cfg["lower_update_mode"] = "matched_upper"
+    cfg["lower"].update(random_steps=100000, learning_starts=100000)
+    t = Trainer(ec, cfg)
+    for _ in range(4):
+        t.step()
+    assert t.upper_updates == 1 and t.lower_updates == 0
+    t.cfg["lower"].update(random_steps=0, learning_starts=0)
+    for _ in range(4):
+        t.step()
+    assert t.upper_updates == 2 and t.lower_updates == 1
+
+
+def test_legacy_missing_cadence_keeps_per_transition_updates():
+    ec, cfg = tiny(); cfg.pop("lower_update_mode", None)
+    t = Trainer(ec, cfg)
+    for _ in range(3):
+        t.step()
+    assert t.cfg["lower_update_mode"] == "per_transition"
+    assert t.lower_updates > 0 and t.upper_updates == 0
+
+
 if __name__ == "__main__":
     torch.set_num_threads(1)
     passed = []

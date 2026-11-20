@@ -1,6 +1,6 @@
 # Independent asynchronous hierarchical waypoint experiment
 
-Revision `async_waypoint_600s_v1`, 2026-11-19. Both policies train from scratch.
+Revision `async_waypoint_600s_matched_v2`, 2026-11-19. Both policies train from scratch.
 Existing joint,20/10 and synchronous-waypoint experiments are unchanged.
 
 ## Physical and scheduling contract
@@ -150,8 +150,15 @@ Lower: sensor cross-attention, UAV self-attention, shared2D tanh Gaussian actor,
 two centralized Q networks and Polyak targets. Hidden128,4 heads, Adam3e-4,
 Huber twin-Q losses, tau0.005, auto-alpha starting0.05, entropy target-2 (one UAV's
 2D action, NOT all6 UAVs), batch256. Replay100000. Uniform whole-map warmup10000
-lower choices; thereafter stochastic SAC. One update per replay insertion once
-warmup/learning-start and batch requirements are met. No late frequency reduction.
+lower choices; thereafter stochastic SAC. Replay insertion is always continuous,
+but the default `lower_update_mode: matched_upper` performs exactly one SAC
+minibatch update immediately after each complete upper PPO update, once warmup,
+learning-start and batch requirements are met. No updates occur on other inserts,
+episode resets or checkpoints. Skipped warmup updates are not accumulated as debt.
+One PPO update still means4 epochs over its1024-frame rollout; one SAC update
+means one sampled256-transition minibatch. Equal update frequency does not imply
+equal optimizer-step counts. This slows lower learning; it does not shorten the
+upper rollout collection time. `per_transition` remains available as a control.
 
 One lower transition runs from a waypoint choice to the NEXT global lower choice,
 not necessarily the same UAV's next choice. Its state contains decision UID and
@@ -173,21 +180,29 @@ and deterministic actions; it does not advance training RNG or update normalizer
 After local commit/push and server pull, from `~/Code/JV_UAV`:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 python3 -u experiments/async_waypoint/train.py --device cuda --upper-steps 102400 --output ./runs/async_waypoint_600s_v1
+CUDA_VISIBLE_DEVICES=1 python3 -u experiments/async_waypoint/train.py --device cuda --upper-steps 102400 --output ./runs/async_waypoint_600s_matched_v2
 ```
 
 102400 upper intervals =100 full PPO updates, potentially spanning many early
-resets. Lower choice/update counts depend on the actual trajectories. This is a
+resets. Lower choice counts depend on trajectories; after warmup each PPO update
+triggers one SAC update. A100-update run therefore has at most100 SAC updates,
+which may be insufficient for lower convergence and is the intended cadence control.
+This is a
 fresh joint experiment, with no freezing or implicit transfer.
 
 Continue another102400 intervals:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 python3 -u experiments/async_waypoint/train.py --device cuda --resume ./runs/async_waypoint_600s_v1/checkpoint.pt --upper-steps 102400 --output ./runs/async_waypoint_600s_v1
+CUDA_VISIBLE_DEVICES=1 python3 -u experiments/async_waypoint/train.py --device cuda --resume ./runs/async_waypoint_600s_matched_v2/checkpoint.pt --upper-steps 102400 --output ./runs/async_waypoint_600s_matched_v2
 ```
 
 If an interruption left live logs newer than the last checkpoint, choose a new
 output directory for the continuation. Parameters come from the checkpoint.
+Old checkpoints without a cadence field preserve their original per-transition
+schedule by default. To intentionally change an old continuation, supply
+`--lower-update-mode matched_upper`, preferably with a new output directory.
+The saved counters include previous training, so lifetime upper/lower totals need
+not match after a switch; new post-warmup updates are paired from that point on.
 
 Functional smoke check (shortened horizon and tiny networks, not training evidence):
 
@@ -212,7 +227,7 @@ python3 experiments/async_waypoint/train.py --device cpu --smoke --output ./outp
   Upper/lower actor and critic scales are separated. Console summary each PPO update.
 
 ```bash
-python3 pack_results.py ./runs/async_waypoint_600s_v1
+python3 pack_results.py ./runs/async_waypoint_600s_matched_v2
 ```
 
 Compare with previous experiments using survival, physical time, actual collection,

@@ -1,4 +1,4 @@
-revision: async_waypoint_600s_v1
+revision: async_waypoint_600s_matched_v2
 seed: 43
 episode_sec: 28800.0
 upper_period_sec: 600.0
@@ -6,6 +6,7 @@ service_sec: 30.0
 integration_sec: 10.0
 total_upper_steps: 102400
 upper_rollout_steps: 1024
+lower_update_mode: matched_upper
 eval_every_upper: 200
 full_eval_every_upper: 2000
 save_every_upper: 1000

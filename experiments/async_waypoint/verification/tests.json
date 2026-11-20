@@ -1,6 +1,6 @@
 {
-  "revision": "async_waypoint_600s_v1",
-  "passed": 29,
+  "revision": "async_waypoint_600s_matched_v2",
+  "passed": 32,
   "failed": 0,
   "tests": [
     {
@@ -117,6 +117,18 @@
     },
     {
       "test": "test_replay_copy_cyclic_overwrite_and_sampler_resume",
+      "status": "pass"
+    },
+    {
+      "test": "test_matched_lower_updates_only_once_after_each_full_upper_rollout",
+      "status": "pass"
+    },
+    {
+      "test": "test_matched_warmup_skip_has_no_catch_up_updates",
+      "status": "pass"
+    },
+    {
+      "test": "test_legacy_missing_cadence_keeps_per_transition_updates",
       "status": "pass"
     }
   ]

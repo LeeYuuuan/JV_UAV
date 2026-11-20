@@ -12,6 +12,10 @@ from learning import UpperPPO, LowerSAC, Replay, upper_observation
 class Trainer:
     def __init__(self, env_cfg, cfg, device="cpu"):
         self.env_cfg, self.cfg = copy.deepcopy(env_cfg), copy.deepcopy(cfg)
+        # Checkpoints without this field keep their original per-transition cadence.
+        self.cfg.setdefault("lower_update_mode", "per_transition")
+        if self.cfg["lower_update_mode"] not in ("per_transition", "matched_upper"):
+            raise ValueError("unknown lower update mode")
         self.device = torch.device(device)
         torch.manual_seed(cfg["seed"])
         self.rng = np.random.default_rng(cfg["seed"])
@@ -35,10 +39,17 @@ class Trainer:
         p = self.pending_lower
         self.replay.add(p["obs"], p["action"], reward, self.env.observation(), terminal, self.env.now - p["time"])
         self.pending_lower = None
+        if self.cfg["lower_update_mode"] == "per_transition":
+            self._update_lower()
+
+    def _update_lower(self):
         cfg = self.cfg["lower"]
-        if self.lower_steps >= cfg["learning_starts"] and len(self.replay.rows) >= cfg["batch_size"]:
+        starts = max(cfg["learning_starts"], cfg["random_steps"]) if self.cfg["lower_update_mode"] == "matched_upper" else cfg["learning_starts"]
+        if self.lower_steps >= starts and len(self.replay.rows) >= cfg["batch_size"]:
             self.last_losses.update(self.lower.update(self.replay.sample(cfg["batch_size"])))
             self.lower_updates += 1
+            return True
+        return False
 
     def _close_upper(self, terminal):
         if self.pending_upper is None:
@@ -49,10 +60,13 @@ class Trainer:
         self.pending_upper = None
         self.upper_steps += 1
         updated = False
+        lower_updated = False
         if len(self.rollout) == self.cfg["upper_rollout_steps"]:
             bootstrap = 0.0 if terminal else self.upper.value(upper_observation(self.env))
             self.last_losses.update(self.upper.update(self.rollout, bootstrap))
             self.rollout = []; self.upper_updates += 1; updated = True
+            if self.cfg["lower_update_mode"] == "matched_upper":
+                lower_updated = self._update_lower()
         elif len(self.rollout) > self.cfg["upper_rollout_steps"]:
             raise RuntimeError("upper rollout exceeded configured length")
         self.loss_history.append(dict(upper_steps=self.upper_steps, lower_steps=self.lower_steps,
@@ -68,6 +82,7 @@ class Trainer:
                     lower_updates=self.lower_updates, episode=self.episodes if terminal else self.episodes + 1,
                     interval_duration=row["duration"], upper_reward=row["reward"], terminal=terminal,
                     upper_updated=updated, rollout_T=len(self.rollout), simulation_sec=self.env.now,
+                    lower_paired_update=lower_updated, lower_update_mode=self.cfg["lower_update_mode"],
                     mean_serving_so_far=self.env.serving_area / max(self.env.now, 1e-7),
                     time_mean_max_backlog=self.env.area / max(self.env.now, 1e-7),
                     request_probabilities=p["probabilities"].tolist(), sampled_actions=p["action"].tolist(),

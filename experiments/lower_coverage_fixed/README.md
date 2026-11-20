@@ -43,6 +43,41 @@ Log both terms and collected-but-zero-bonus counts so scale/feedback can be audi
 
 ## Input, network and learning
 
+### Optional distance-regularized comparison
+
+The original config remains unchanged (missing `movement_weight` means0).
+New `configs/training_lower_coverage_distance.yaml` uses revision
+`lower_coverage_fixed60_all_move002_v2`, with the same seed and other parameters:
+
+```
+r_move = -0.02 * mean_active_UAV(norm(new_waypoint-current_position)) / map_diagonal
+```
+
+Distances are from the last retained position, not from the airship. Inactive UAVs
+are excluded from the mean and have zero logged distance. On a4000m square this
+cost is0 for no movement,-0.00354 for mean1000m, and-0.02 for a full diagonal.
+This is a weak regularizer; it does not enforce speed/energy or prevent parking.
+Logs add per-UAV/mean/total move distance and a separate `movement` reward term.
+Episode summaries include mean per-step distance, mean per-active-UAV distance,
+total distance, and summed movement reward. Eval dashboards show the new reward
+term automatically. Geometry, arrivals, collection and active-group rules are unchanged.
+
+Start a FRESH comparison on PC:
+
+```powershell
+python -u experiments/lower_coverage_fixed/train.py --device cuda --train-config configs/training_lower_coverage_distance.yaml --steps 100000 --output ./runs/lower_coverage_fixed60_all_move002_v2
+```
+
+Server equivalent:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python3 -u experiments/lower_coverage_fixed/train.py --device cuda --train-config configs/training_lower_coverage_distance.yaml --steps 100000 --output ./runs/lower_coverage_fixed60_all_move002_v2
+```
+
+Existing v1 checkpoints retain their saved weight0 when resumed. Resume always
+uses checkpoint config, so a new --train-config does not rewrite stored replay
+rewards. Use the new output/fresh run above to test weight0.02 without mixing rewards.
+
 - Sensor tokens: `[x/4000,y/4000,backlog/3000]`; no CNN or future data.
 - Active UAV tokens: `[x/4000,y/4000,ID/5,remaining_service/20,
   remaining_episode/200,active_count/6]`. SOC has been removed.
@@ -86,6 +121,34 @@ saved. If logs are newer than the checkpoint after interruption, resume into a
 new output directory to avoid mixing/repeating logged steps. --steps is additional.
 
 ## Outputs and evaluation
+
+### Longer budget and gamma0.95 comparison
+
+100000 steps is500 episodes, not2500. To reach2500 episodes, use500000 total steps.
+The completed distance-v2 run can continue exactly, adding400000 steps on PC:
+
+```powershell
+python -u experiments/lower_coverage_fixed/train.py --device cuda --resume ./runs/lower_coverage_fixed60_all_move002_v2/checkpoint.pt --steps 400000 --output ./runs/lower_coverage_fixed60_all_move002_v2
+```
+
+`configs/training_lower_coverage_g095.yaml` is a fresh matched comparison: gamma0.95
+instead of0.99, total budget500000, revisionlower_coverage_fixed60_all_move002_g095_v3.
+Seed43, map42, reward (including movement0.02), observation, architecture, warmup,
+replay and all other learning settings are identical to distance-v2.
+
+```powershell
+python -u experiments/lower_coverage_fixed/train.py --device cuda --train-config configs/training_lower_coverage_g095.yaml --steps 500000 --output ./runs/lower_coverage_fixed60_all_move002_g095_v3
+```
+
+For server usepython3 and optionally prefixCUDA_VISIBLE_DEVICES=1. Do not combine
+--resume fromv2 with this new config expecting a gamma change: resume preserves
+checkpoint parameters. Use the fresh output above for thegamma0.95 comparison.
+
+Current sensor inputs are coordinates and actual backlog, not last-visit age.
+Scene still maintains ages for diagnostics, but coverage_sac.pack does not feed
+them into the network. No input changes are made in this gamma/budget comparison.
+Lower gamma changes the objective as well as credit length; it is an experiment,
+not a demonstrated repair for the critic calibration failure recorded in the audit.
 
 - Every1000 steps (5 episodes): deterministic evaluation on seeds1001/1002/1003.
   EVERY eval saves per-seed trajectory.png and summary.json. Each UAV gets a panel;

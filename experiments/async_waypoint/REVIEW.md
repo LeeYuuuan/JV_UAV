@@ -1,5 +1,15 @@
 # Implementation review record
 
+Cadence revision: `async_waypoint_600s_matched_v2`. Replay collection and physical
+event semantics are unchanged. `_close_lower` inserts only in matched mode;
+`_close_upper` invokes exactly one `_update_lower` after a full PPO update. Readiness
+requires both warmup and learning-start thresholds and a complete minibatch. No
+catch-up debt, reset-triggered update or partial-rollout flush is introduced.
+Legacy missing-field checkpoints keep per-transition behavior; an explicit CLI
+override can change the schedule and records a new revision in provenance.
+Tests cover paired-only timing, warmup skips without catch-up, legacy default,
+and exact continuation across reset/PPO boundaries under the new cadence.
+
 Date2026-11-19. Scope: authored asynchronous experiment files, their configuration,
 test cases, and actual invoked dependencies. Reviewed function bodies and their
 call ordering, not just public signatures. A review/test pass is not a universal

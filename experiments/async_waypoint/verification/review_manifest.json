@@ -1,5 +1,6 @@
 {
-  "scope": "New experiment Python sources; see REVIEW.md for dependency scope and limitations",
+  "revision": "async_waypoint_600s_matched_v2",
+  "scope": "Cadence revision; physical source unchanged; see REVIEW.md",
   "files": {
     "experiments/async_waypoint/engine.py": {
       "sha256": "8535db94d0b90d76eb6fbbe85f6570cc422a61c9044d0882bb42a92b7ba6d957",
@@ -81,8 +82,8 @@
       ]
     },
     "experiments/async_waypoint/train.py": {
-      "sha256": "124fa253aabcf9243139b2b854cdcd6984f109a3a0c666b3f79943ce1ed7e061",
-      "lines": 187,
+      "sha256": "998d3eb25437cec301c6648e96b2eeba4af07afad84eecd1c598e6c386b145d6",
+      "lines": 199,
       "functions": [
         "validate",
         "provenance",
@@ -91,11 +92,12 @@
       ]
     },
     "experiments/async_waypoint/trainer.py": {
-      "sha256": "0e30559b5cced72687577ba0c61adfa02e5cba6a9d145ec2617f60de4cbe9dc8",
-      "lines": 158,
+      "sha256": "9e903899833ec340f6da08bcb8be83b12e54f79ca4c0c1f36fb6ad132bd8ab02",
+      "lines": 173,
       "functions": [
         "__init__",
         "_close_lower",
+        "_update_lower",
         "_close_upper",
         "step",
         "evaluate",
@@ -112,8 +114,8 @@
       ]
     },
     "tests/test_async_waypoint.py": {
-      "sha256": "2b5b151243bb43b6adaa4be0784ca6bcb40c8349c23f99b95923bec2e1fbbe92",
-      "lines": 432,
+      "sha256": "038c264b11e6e53f16e5ef2c6858d3219e5b663918ccfe9d3732fa395d0c4ac5",
+      "lines": 470,
       "functions": [
         "configs",
         "tiny",
@@ -147,6 +149,9 @@
         "test_nonfull_charger_can_leave_and_release_slot",
         "test_terminal_upper_boundary_has_no_extra_action_or_reward",
         "test_replay_copy_cyclic_overwrite_and_sampler_resume",
+        "test_matched_lower_updates_only_once_after_each_full_upper_rollout",
+        "test_matched_warmup_skip_has_no_catch_up_updates",
+        "test_legacy_missing_cadence_keeps_per_transition_updates",
         "actor_no_entropy",
         "constant_target",
         "poisson"
