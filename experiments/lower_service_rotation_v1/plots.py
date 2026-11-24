@@ -19,9 +19,13 @@ def atomic_figure(fig, path):
     tmp.replace(path)
 
 
-def evaluation(env, output):
+def evaluation(env, output, trajectory_steps=30, page_steps=15):
+    if trajectory_steps <= 0 or page_steps <= 0:
+        raise ValueError('trajectory_steps and page_steps must be positive')
     output = Path(output)
-    for start, end in ((0, 15), (15, 30)):
+    horizon = min(trajectory_steps, len(env.rows))
+    for start in range(0, horizon, page_steps):
+        end = min(start+page_steps, horizon)
         rows = env.rows[start:end]
         if not rows:
             continue

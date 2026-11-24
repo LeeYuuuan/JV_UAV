@@ -18,6 +18,10 @@ def main():
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     output=run.with_name(f'{run.name}_{stamp}.zip')
     paths=[p for p in run.iterdir() if p.suffix in ('.json','.jsonl','.png')]
+    # Standalone evaluation outputs contain seed folders directly under the root.
+    for directory in list(run.glob('seed_*'))+list(run.glob('policy_*')):
+        if directory.is_dir():
+            paths.extend(p for p in directory.rglob('*') if p.suffix in ('.json','.png','.gz'))
     evals=sorted(p for p in run.glob('eval_*') if p.is_dir())
     selected=sorted(set(evals[:1]+evals[-args.recent_evals:]))
     for directory in selected:

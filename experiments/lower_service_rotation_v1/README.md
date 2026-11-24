@@ -160,3 +160,42 @@ New plots go into each seed's `plots_v2/`; original figures, logs and checkpoint
 are preserved. The metadata records the exact source-trace and plotting hashes.
 An already running Python training process keeps its imported plotting code;
 pulling code alone does not update its future figures until restart/resume.
+
+## Standalone longer trajectory evaluation
+
+Regular training eval already executes300 physical steps; its maps display only
+the first30. To evaluate a saved actor for150 steps and inspect **all150 trajectory
+steps**, without updating or resuming training:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/evaluate.py --checkpoint runs/service_rotation_v1_aux05_seed43_corrected/checkpoint.pt --device cuda --steps 150 --page-steps 15 --output runs/service_rotation_v1_aux05_seed43_corrected/eval150_final
+```
+
+Each of seeds1001/1002/1003 gets10 all-UAV trajectory panels (1-15,16-30,...,
+136-150), a full150-step backlog/SOC/reward/status figure, compressed trace,
+and summary. The20-step UAV cycle continues normally; sensor backlog/age are
+not reset between panels. Mean actor actions are used, with no exploration mix.
+The saved checkpoint's actual reward coefficient is preserved, never overridden.
+Output metadata records the exact checkpoint hash/training steps and plot code.
+Use a fresh output directory each time. `--steps 300` similarly exposes the full
+existing evaluation horizon; returns from150 and300 steps should not be directly
+compared as equal-length episodes.
+
+## Diagnose policy learning before extending training
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/compare_policies.py --checkpoint runs/service_rotation_v1_aux05_seed43_corrected/checkpoint.pt --device cuda --output runs/service_rotation_v1_aux05_seed43_corrected/compare_final
+```
+
+This reads one checkpoint snapshot and compares actor mean, sampled actor
+(three action-RNG repeats per environment seed), and all-greedy nearest
+unreserved top-6 targets. Each rollout is300 steps; three environment seeds
+are used. It never updates weights or replay. Outputs include comparison.png,
+per-rollout summaries/traces and first30-step paginated maps. The checkpoint's
+actual reward settings are preserved. Differences in availability can alter
+random scheduling and arrivals, so these are multi-seed reference comparisons,
+not perfectly matched counterfactual trajectories.
+
+```bash
+python3 experiments/lower_service_rotation_v1/pack_results.py runs/service_rotation_v1_aux05_seed43_corrected/compare_final
+```
