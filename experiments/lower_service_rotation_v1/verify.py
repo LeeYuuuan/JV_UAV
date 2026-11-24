@@ -52,7 +52,7 @@ def run():
     e.collector.radius=e.radius
     _,reward,terminated,truncated,row=e.step(np.zeros((6,2),np.float32))
     assert row['target_hits']==6 and row['terms']['target']==30
-    assert 0<=row['terms']['auxiliary']<5
+    assert 0<=row['terms']['auxiliary']<cfg['reward']['auxiliary_max']
     assert np.all(e.backlog==0) and np.all(e.age==0)
     assert not terminated and not truncated
 

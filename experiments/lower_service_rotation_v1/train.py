@@ -137,7 +137,7 @@ class Trainer:
                 if env.step_count<30:probes.append(dict(step=env.step_count+1,**self.sac.diagnostics(obs)))
                 env.step(self.sac.act(obs,deterministic=True))
             summary=env.summary() | dict(seed=seed,training_steps=self.steps,updates=self.updates,
-                                         revision=FORMAT,policy='actor_mean_only')
+                                         revision=self.cfg['revision'],policy='actor_mean_only')
             self.evals.append(summary)
             folder=output/f'eval_{self.steps:08d}'/f'seed_{seed}'
             folder.mkdir(parents=True,exist_ok=True)
@@ -158,7 +158,7 @@ def provenance(output,trainer,args):
         for source in sources:
             name=source.relative_to(ROOT).as_posix();data=source.read_bytes()
             manifest[name]=hashlib.sha256(data).hexdigest();archive.writestr(name,data)
-    write_json(folder/'manifest.json',dict(revision=FORMAT,files_sha256=manifest,
+    write_json(folder/'manifest.json',dict(revision=trainer.cfg['revision'],checkpoint_format=FORMAT,files_sha256=manifest,
                arguments={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
                torch=torch.__version__,device=str(trainer.sac.device),starting_steps=trainer.steps,
                description='Displacement SAC; serving-only queries; random 10-step dispatch; physical return/charging; no negative-backlog reward; 300-step time-limit bootstrap.'))
@@ -199,8 +199,8 @@ def main():
     write_json(output/'resolved_config.json',dict(environment=trainer.world,training=cfg))
     provenance(output,trainer,args)
     end=trainer.steps+(args.steps or cfg['total_steps']);started=time.monotonic()
-    print(f"{FORMAT} | device={device} | additional steps={end-trainer.steps} | output={output}",flush=True)
-    print(f"gamma={cfg['sac']['gamma']} | target=5 per covered target | auxiliary<=5 | real return/charging | cycle_reset={cfg['cycle_reset']} | charging_slots={cfg['charging_slots']}",flush=True)
+    print(f"{cfg['revision']} | device={device} | additional steps={end-trainer.steps} | output={output}",flush=True)
+    print(f"gamma={cfg['sac']['gamma']} | target={cfg['reward']['target_bonus']} per covered target | auxiliary<={cfg['reward']['auxiliary_max']} | real return/charging | cycle_reset={cfg['cycle_reset']} | charging_slots={cfg['charging_slots']}",flush=True)
     if trainer.steps==0:
         trainer.evaluate(output)
         training(trainer.history,trainer.losses,trainer.evals,output)
@@ -218,7 +218,7 @@ def main():
                 trainer.last_loss=trainer.sac.update(trainer.replay.sample(cfg['sac']['batch_size']))
                 trainer.updates+=1;trainer.pending_losses.append(trainer.last_loss)
             if trainer.steps%cfg['loss_log_every']==0:
-                status=dict(revision=FORMAT,training_steps=trainer.steps,updates=trainer.updates,
+                status=dict(revision=cfg['revision'],training_steps=trainer.steps,updates=trainer.updates,
                             episode=trainer.episodes+1,episode_step=trainer.env.step_count,
                             reward=reward,max_backlog=row['max_backlog'],serving=len(obs['ids']),
                             episode_reward_so_far=float(sum(r['reward'] for r in trainer.env.rows)),
@@ -232,7 +232,7 @@ def main():
                     trainer.losses.append(loss);append(output/'losses.jsonl',loss);trainer.pending_losses.clear()
             if truncated:
                 trainer.episodes+=1
-                summary=trainer.env.summary() | dict(revision=FORMAT,episode=trainer.episodes,
+                summary=trainer.env.summary() | dict(revision=cfg['revision'],episode=trainer.episodes,
                          training_steps=trainer.steps,updates=trainer.updates,terminated=False,truncated=True,
                          source_counts=trainer.source_counts.copy(),epsilon=epsilon)
                 trainer.history.append(summary);append(output/'episodes.jsonl',summary)

@@ -1,4 +1,4 @@
-revision: displacement_service_rotation_v1
+revision: displacement_service_rotation_v1_aux05
 seed: 43
 total_steps: 300000
 episode_steps: 300
@@ -13,7 +13,7 @@ age_scale_sec: 6000.0
 reward:
   target_bonus: 5.0
   pnorm_p: 4.0
-  auxiliary_max: 5.0
+  auxiliary_max: 0.5
   auxiliary_reference_packets: 300.0
   boundary_per_uav: 0.1
   return_failure_per_uav: 10.0

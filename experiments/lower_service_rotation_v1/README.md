@@ -1,5 +1,10 @@
 # Displacement service rotation v1
 
+Current revision: `displacement_service_rotation_v1_aux05`. The auxiliary reward
+ceiling was reduced from 5 to 0.5; target bonuses and other settings are unchanged.
+Start a fresh run for this reward change. Resuming loads the saved configuration,
+so an old checkpoint will retain its old auxiliary ceiling and replay rewards.
+
 Independent lower-only experiment. This does not import or modify any previous
 waypoint experiment, upper policy, or joint runner. It reuses only the existing
 sensor generator, energy/service models, configuration loader, and gradient helper.
@@ -10,7 +15,7 @@ From the **JV_UAV** repository (not P1_J), after pulling the new files:
 
 ```bash
 python3 -m pip install -r requirements-rl.txt
-CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --steps 300000 --output runs/service_rotation_v1_seed43
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --steps 300000 --output runs/service_rotation_v1_aux05_seed43
 ```
 
 The budget is physical 60-second steps: 300,000 steps = 1,000 training episodes.
@@ -20,7 +25,7 @@ Use tmux normally; CUDA sees the chosen physical GPU as local cuda:0.
 To continue for another 300,000 steps with identical settings:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --resume runs/service_rotation_v1_seed43/checkpoint.pt --steps 300000 --output runs/service_rotation_v1_seed43
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --resume runs/service_rotation_v1_aux05_seed43/checkpoint.pt --steps 300000 --output runs/service_rotation_v1_aux05_seed43
 ```
 
 Resume restores model/target/optimizers/alpha, replay, physical state, partial
@@ -79,7 +84,7 @@ still bootstrap their future value, but produce no actor update of their own.
 
 ## Reward and learning settings
 
-`5 * target_hits + 5 * P4 / (P4 + 300) - 0.1 * oob_count - return_cost`.
+`5 * target_hits + 0.5 * P4 / (P4 + 300) - 0.1 * oob_count - return_cost`.
 Target IDs are frozen before the action; union coverage is counted once.
 P4 uses covered sensors' queue sizes after arrivals and before collection.
 There is **no negative backlog reward** and no inherited legacy bonus/penalty.
@@ -127,7 +132,7 @@ python3 experiments/lower_service_rotation_v1/verify.py
 Package completed or partially running results (no large checkpoint included):
 
 ```bash
-python3 experiments/lower_service_rotation_v1/pack_results.py runs/service_rotation_v1_seed43
+python3 experiments/lower_service_rotation_v1/pack_results.py runs/service_rotation_v1_aux05_seed43
 ```
 
 The packer includes all scalar logs/curves, source provenance, the initial eval,
