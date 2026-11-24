@@ -2,8 +2,10 @@
 
 Current revision: `displacement_service_rotation_v1_aux05`. The auxiliary reward
 ceiling was reduced from 5 to 0.5; target bonuses and other settings are unchanged.
-Start a fresh run for this reward change. Resuming loads the saved configuration,
-so an old checkpoint will retain its old auxiliary ceiling and replay rewards.
+The CLI defaults explicitly to `--auxiliary-max 0.5`, overriding a stale YAML
+value on fresh runs. A checkpoint with a different coefficient is rejected on
+resume. To continue an old 5.0 run intentionally, pass `--auxiliary-max 5.0`.
+Start a fresh run to change the reward; old replay rewards are never relabeled.
 
 Independent lower-only experiment. This does not import or modify any previous
 waypoint experiment, upper policy, or joint runner. It reuses only the existing
@@ -15,7 +17,7 @@ From the **JV_UAV** repository (not P1_J), after pulling the new files:
 
 ```bash
 python3 -m pip install -r requirements-rl.txt
-CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --steps 300000 --output runs/service_rotation_v1_aux05_seed43
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --auxiliary-max 0.5 --steps 300000 --output runs/service_rotation_v1_aux05_seed43_corrected
 ```
 
 The budget is physical 60-second steps: 300,000 steps = 1,000 training episodes.
@@ -25,7 +27,7 @@ Use tmux normally; CUDA sees the chosen physical GPU as local cuda:0.
 To continue for another 300,000 steps with identical settings:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --resume runs/service_rotation_v1_aux05_seed43/checkpoint.pt --steps 300000 --output runs/service_rotation_v1_aux05_seed43
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_service_rotation_v1/train.py --device cuda --auxiliary-max 0.5 --resume runs/service_rotation_v1_aux05_seed43_corrected/checkpoint.pt --steps 300000 --output runs/service_rotation_v1_aux05_seed43_corrected
 ```
 
 Resume restores model/target/optimizers/alpha, replay, physical state, partial
@@ -113,6 +115,12 @@ warmup. Eval always uses actor mean without exploration mixing.
 - `eval_STEP/seed_SEED/trajectory_01_15.png`, `trajectory_16_30.png`:
   **all UAVs on each map**, service footprints and real return segments. No
   per-UAV trajectory figures and no 100-step PDF.
+  The 16-30 panel spans the reset after step20: faded paths and hollow squares
+  mark the old cycle; stronger paths show the new cycle; triangles mark step30.
+  The reset is explicitly labeled and is never drawn as a physical return flight.
+  Sensor colors show backlog at panel end, so a previously visited sensor may
+  already have accumulated new packets. Coverage circles mark endpoint service,
+  not a continuously swept collection region during movement.
 - `eval_STEP/seed_SEED/evaluation_metrics.png`: full 300-step backlog, SOC,
   cumulative reward and role histories. Trajectory panels show only first 30;
   scalar eval return/backlog summaries always use the complete 300 steps.
@@ -132,7 +140,7 @@ python3 experiments/lower_service_rotation_v1/verify.py
 Package completed or partially running results (no large checkpoint included):
 
 ```bash
-python3 experiments/lower_service_rotation_v1/pack_results.py runs/service_rotation_v1_aux05_seed43
+python3 experiments/lower_service_rotation_v1/pack_results.py runs/service_rotation_v1_aux05_seed43_corrected
 ```
 
 The packer includes all scalar logs/curves, source provenance, the initial eval,
@@ -140,3 +148,15 @@ the latest three evals and latest three detailed episode traces. It ignores
 incomplete log lines/compressed traces and leaves the training process untouched.
 Use this experiment's packer: the older repository packer does not know the new
 loss/episode filenames.
+
+Redraw a completed evaluation with explicit cycle-reset markers, without stopping
+training or loading/running a model:
+
+```bash
+python3 experiments/lower_service_rotation_v1/redraw.py runs/service_rotation_v1_aux05_seed43/eval_00003000
+```
+
+New plots go into each seed's `plots_v2/`; original figures, logs and checkpoints
+are preserved. The metadata records the exact source-trace and plotting hashes.
+An already running Python training process keeps its imported plotting code;
+pulling code alone does not update its future figures until restart/resume.

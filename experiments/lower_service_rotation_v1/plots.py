@@ -32,25 +32,53 @@ def evaluation(env, output):
         fig.colorbar(points, ax=ax, fraction=.045, label=f'Backlog after step {end} / packets')
         ax.add_patch(Circle(env.home, 1800, fill=False, ls='--', color='gray', alpha=.6))
         ax.scatter(*env.home, marker='*', s=180, color='#b83354', zorder=6)
+        # Physical position_after is BEFORE a reset; next_positions is AFTER it.
+        # Never connect these two positions as a flight segment.
+        reset_rows = [row for row in rows if row.get('cycle_reset', False)]
+        reset_steps = [row['step'] for row in reset_rows]
+        latest_segment_start = max(reset_steps)+1 if reset_steps and max(reset_steps)<end else start+1
         for i in range(env.n):
             for row in rows:
                 before = np.array(row['position_before'])[i]
                 after = np.array(row['position_after'])[i]
                 status = row['status_before'][i]
+                old_segment = row['step'] < latest_segment_start
+                alpha = .35 if old_segment else .9
                 if status in (0, 1):
                     ax.plot([before[0], after[0]], [before[1], after[1]],
-                            color=COLORS[i], ls='-' if status == 0 else '--', lw=1.3, alpha=.85)
+                            color=COLORS[i], ls='-' if status == 0 else '--', lw=1.3, alpha=alpha)
                 if i in row['action_ids'] and row['soc_after'][i] > 0:
-                    ax.add_patch(Circle(after, env.radius, color=COLORS[i], alpha=.045))
-                    ax.scatter(*after, s=10, color=COLORS[i])
+                    ax.add_patch(Circle(after, env.radius, color=COLORS[i], alpha=.025 if old_segment else .045))
+                    ax.scatter(*after, s=10, color=COLORS[i], alpha=alpha)
+            for reset in reset_rows:
+                position = np.array(reset['position_after'])[i]
+                if np.linalg.norm(position-env.home)>1:
+                    ax.scatter(*position, marker='s', s=40, facecolors='none', edgecolors=COLORS[i], zorder=5)
+                    separation=np.linalg.norm(np.array(reset['position_after'])-position,axis=1)
+                    separation[i]=np.inf
+                    if separation.min()>100:
+                        ax.annotate(f'U{i}@{reset["step"]}', position, xytext=(4,-10),
+                                    textcoords='offset points', fontsize=7, color=COLORS[i])
             final = np.array(rows[-1]['position_after'])[i]
             ax.scatter(*final, marker='^', s=65, color=COLORS[i], edgecolor='white', zorder=5)
-            ax.annotate(f'U{i}', final, xytext=(4, 4), textcoords='offset points', fontsize=8)
+            # At-home IDs remain identifiable by color without overlapping labels.
+            separation=np.linalg.norm(np.array(rows[-1]['position_after'])-final,axis=1)
+            separation[i]=np.inf
+            if np.linalg.norm(final-env.home)>1 and separation.min()>100:
+                ax.annotate(f'U{i}@{rows[-1]["step"]}', final, xytext=(4,4), textcoords='offset points', fontsize=8)
+        title=f'All UAVs | steps {start+1}-{end}\nSolid: serving; dashed: actual return; shading: service footprints'
+        if reset_steps:
+            title+='\nFull/home reset after step '+', '.join(map(str,reset_steps))+' (not a return flight)'
+            if latest_segment_start>start+1:
+                title+=f'; faded: before reset'
         ax.set(xlim=(0, env.size), ylim=(0, env.size), aspect='equal', xlabel='East / m', ylabel='North / m',
-               title=f'All UAVs | steps {start+1}-{end}\nSolid: serving; dashed: actual return; shading: service footprints')
+               title=title)
         ax.grid(alpha=.15)
         handles = [Line2D([0],[0],color=COLORS[i], label=f'U{i}') for i in range(env.n)]
-        ax.legend(handles=handles, ncol=env.n, loc='upper center', bbox_to_anchor=(.5,-.07))
+        if reset_steps:
+            handles.extend([Line2D([],[],color='gray',marker='s',markerfacecolor='none',ls='none',label='Before reset'),
+                            Line2D([],[],color='gray',marker='^',ls='none',label='Panel end')])
+        ax.legend(handles=handles, ncol=4 if reset_steps else env.n, loc='upper center', bbox_to_anchor=(.5,-.07))
         atomic_figure(fig, output/f'trajectory_{start+1:02d}_{end:02d}.png')
     rows = env.rows
     x = np.arange(1, len(rows)+1)

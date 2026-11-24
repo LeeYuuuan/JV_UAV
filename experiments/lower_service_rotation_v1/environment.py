@@ -263,6 +263,9 @@ class Environment:
     def summary(self):
         rows = self.rows
         return dict(episode_reward=float(sum(r['reward'] for r in rows)), steps=len(rows),
+                    auxiliary_max=float(self.cfg['reward']['auxiliary_max']),
+                    observed_auxiliary_step_max=float(max(r['terms']['auxiliary'] for r in rows)),
+                    cumulative_auxiliary_bound=float(len(rows)*self.cfg['reward']['auxiliary_max']),
                     mean_max_backlog=float(np.mean([r['max_backlog'] for r in rows])),
                     worst_max_backlog=float(max(r['max_backlog'] for r in rows)),
                     final_max_backlog=float(self.backlog.max()),

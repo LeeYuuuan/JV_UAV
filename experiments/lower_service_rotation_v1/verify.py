@@ -12,7 +12,7 @@ sys.path.insert(0,str(HERE.parents[1]/'src'))
 from jv_uav.config import load_config
 from environment import Environment, Status
 from agent import SAC
-from train import Trainer, validate
+from train import Trainer, validate, configure_auxiliary
 
 
 def run():
@@ -20,6 +20,15 @@ def run():
     world=load_config(HERE/'environment.yaml')
     cfg=yaml.safe_load((HERE/'config.yaml').read_text())
     validate(cfg,world)
+    stale=copy.deepcopy(cfg);stale['reward']['auxiliary_max']=5.
+    fixed=configure_auxiliary(stale,.5)
+    assert fixed['reward']['auxiliary_max']==.5 and stale['reward']['auxiliary_max']==5.
+    assert fixed['revision']=='displacement_service_rotation_v1_aux05'
+    assert configure_auxiliary(fixed,.5,resume=True)==fixed
+    try:
+        configure_auxiliary(stale,.5,resume=True)
+    except ValueError as exc:assert 'checkpoint auxiliary_max=5.0' in str(exc)
+    else:raise AssertionError('old-reward replay must not silently resume under a new ceiling')
     # Check individual physical transitions without the explicit cycle reset first.
     cfg['cycle_reset']=False
     def env():return Environment(world,cfg,123)

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
+import math
 import random
 import sys
 import time
@@ -23,6 +24,23 @@ from agent import SAC, Replay
 from plots import training, evaluation
 
 FORMAT = 'displacement_service_rotation_v1'
+
+
+def configure_auxiliary(cfg, value, *, resume=False):
+    """Explicit CLI ceiling; never mix changed reward settings with old replay."""
+    if not math.isfinite(value) or value < 0:
+        raise ValueError('--auxiliary-max must be finite and nonnegative')
+    if resume:
+        saved = float(cfg['reward']['auxiliary_max'])
+        if not math.isclose(saved, value, rel_tol=0, abs_tol=1e-12):
+            raise ValueError(f'checkpoint auxiliary_max={saved} differs from requested {value}; '
+                             'start a fresh run for a reward change. To continue the old reward, '
+                             'explicitly pass its saved --auxiliary-max value.')
+        return cfg
+    cfg = copy.deepcopy(cfg)
+    cfg['reward']['auxiliary_max'] = float(value)
+    cfg['revision'] = FORMAT + '_aux' + format(value, 'g').replace('.', '')
+    return cfg
 
 
 def write_json(path, data):
@@ -174,6 +192,8 @@ def main():
     parser.add_argument('--steps',type=int,help='Additional physical steps, including when resuming')
     parser.add_argument('--seed',type=int)
     parser.add_argument('--resume',type=Path)
+    parser.add_argument('--auxiliary-max',type=float,default=0.5,
+                        help='Explicit auxiliary ceiling (default 0.5); resume must match saved reward')
     args=parser.parse_args();torch.set_num_threads(1)
     if args.steps is not None and args.steps<=0:parser.error('--steps must be positive')
     device=('cuda' if torch.cuda.is_available() else 'cpu') if args.device=='auto' else args.device
@@ -181,6 +201,10 @@ def main():
     output=args.output.resolve();output.mkdir(parents=True,exist_ok=True)
     if args.resume:
         trainer=Trainer.load(args.resume,device)
+        try:configure_auxiliary(trainer.cfg,args.auxiliary_max,resume=True)
+        except ValueError as exc:parser.error(str(exc))
+        if trainer.env.cfg['reward'] != trainer.cfg['reward']:
+            parser.error('checkpoint environment reward differs from trainer configuration')
         if args.seed is not None and args.seed!=trainer.cfg['seed']:parser.error('resume seed mismatch')
         for name in ('episodes.jsonl','losses.jsonl','progress.jsonl','eval.jsonl'):
             path=output/name
@@ -193,6 +217,8 @@ def main():
     else:
         if any(output.iterdir()):parser.error('output directory is not empty; use --resume or a new directory')
         cfg=yaml.safe_load(args.config.read_text(encoding='utf-8'))
+        try:cfg=configure_auxiliary(cfg,args.auxiliary_max)
+        except ValueError as exc:parser.error(str(exc))
         if args.seed is not None:cfg['seed']=args.seed
         trainer=Trainer(load_config(args.env_config),cfg,device)
     cfg=trainer.cfg
