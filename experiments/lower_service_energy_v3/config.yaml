@@ -1,0 +1,46 @@
+revision: displacement_service_energy_v3_aux05
+seed: 43
+total_steps: 900000
+episode_steps: 300
+dispatch_every: 10
+check_every: 20
+service_count_min: 2
+service_count_max: 6
+charging_slots: null  # null = unlimited; integer enables FIFO charging
+cycle_reset: true  # after the safety check, start the next 20-step UAV cycle full/home
+target_count: 6
+age_scale_sec: 6000.0
+reward:
+  target_bonus: 5.0
+  pnorm_p: 4.0
+  auxiliary_max: 0.5
+  auxiliary_reference_packets: 300.0
+  boundary_per_uav: 0.1
+  return_failure_per_uav: 2.0
+  return_distance_weight: 0.0
+  return_distance_scale_m: 1800.0
+  energy_deficit_weight: 5.0
+  energy_deficit_scale_soc: 0.1  # 10 percentage-point deficit costs 5 per UAV per step
+exploration:
+  epsilon_start: 0.8
+  epsilon_end: 0.1
+  decay_steps: 100000
+  random_probability: 0.25
+  greedy_probability: 0.5
+sac:
+  hidden: 128
+  heads: 4
+  lr: 0.0003
+  gamma: 0.95
+  tau: 0.005
+  alpha: 0.05
+  auto_alpha: true
+  batch_size: 256
+  learning_starts: 1024
+  replay_capacity: 100000
+  max_grad_norm: 1.0
+eval_every: 3000
+eval_seeds: [1001, 1002, 1003]
+save_every: 3000
+loss_log_every: 100
+trace_every_episodes: 10
