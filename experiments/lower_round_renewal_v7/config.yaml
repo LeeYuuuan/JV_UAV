@@ -1,4 +1,4 @@
-revision: displacement_round_renewal_v7
+revision: displacement_round_renewal_v7_bounded_age
 seed: 43
 total_steps: 900000
 episode_steps: 300
@@ -10,6 +10,7 @@ charging_slots: null
 cycle_reset: true
 target_count: 6
 age_scale_sec: 6000.0
+age_normalization: bounded
 reward:
   pnorm_p: 4.0
   boundary_per_uav: 0.1

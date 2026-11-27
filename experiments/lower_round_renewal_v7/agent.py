@@ -101,6 +101,11 @@ class SAC:
     def __init__(self, env, cfg, device):
         self.device, self.cfg = torch.device(device), copy.deepcopy(cfg)
         self.size, self.age_scale, self.fleet = env.size, env.cfg['age_scale_sec'], env.n
+        self.sensor_count = env.m
+        # Legacy snapshots omit this flag; retain their original input meaning for evaluation.
+        self.age_normalization = env.cfg.get('age_normalization', 'linear')
+        if self.age_normalization not in ('linear', 'bounded'):
+            raise ValueError('unknown age normalization')
         args = (env.m, cfg['hidden'], cfg['heads'])
         self.actor = Actor(*args).to(self.device)
         self.critic = TwinQ(*args).to(self.device)
@@ -109,6 +114,12 @@ class SAC:
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg['lr'])
         self.log_alpha = torch.tensor(math.log(cfg['alpha']), device=self.device, requires_grad=True)
         self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=cfg['lr'])
+
+    def normalize_age(self, age):
+        age = np.asarray(age, dtype=np.float64)
+        if self.age_normalization == 'bounded':
+            return (age / (age + self.age_scale)).astype(np.float32)
+        return (age / self.age_scale).astype(np.float32)
 
     def pack(self, observations):
         count = len(observations)
@@ -128,12 +139,12 @@ class SAC:
             uav[b, :, 4:10] = np.eye(6)[obs['status']]
             valid=obs['assigned_valid']
             uav[b, valid, 10:12]=(obs['assigned_xy'][valid]-obs['xy'][valid])/self.size
-            uav[b, :, 12]=obs['assigned_age']/self.age_scale
+            uav[b, :, 12]=self.normalize_age(obs['assigned_age'])
             uav[b, :, 13]=valid
-        targets = np.stack([np.column_stack((o['targets']/self.size, o['target_age']/self.age_scale)) for o in observations])
+        targets = np.stack([np.column_stack((o['targets']/self.size, self.normalize_age(o['target_age']))) for o in observations])
         values = dict(active=active, query_ids=query_ids, query_mask=query_mask, uav=uav,
                       target_mask=np.stack([o['target_mask'] for o in observations]),
-                      targets=targets.astype(np.float32), age=np.stack([np.concatenate((o['age']/self.age_scale,o['round_visited'].astype(np.float32),[o['round_progress']])) for o in observations]).astype(np.float32),
+                      targets=targets.astype(np.float32), age=np.stack([np.concatenate((self.normalize_age(o['age']),o['round_visited'].astype(np.float32),[o['round_progress']])) for o in observations]).astype(np.float32),
                       phase=np.array([[o['phase']] for o in observations], dtype=np.float32))
         return {k:torch.as_tensor(v, device=self.device) for k,v in values.items()}
 
@@ -206,7 +217,9 @@ class SAC:
             for p, t in zip(self.critic.parameters(), self.target.parameters()):
                 t.lerp_(p, self.cfg['tau'])
         metrics.update(alpha=float(self.log_alpha.exp().detach()),
-                       input_age_max=float(batch['age'].max()), active_mean=float(batch['active'].float().sum(1).mean()))
+                       input_age_max=float(batch['age'][:, :self.sensor_count].max()),
+                       raw_age_max_sec=float(max(np.max(o['age']) for o in obs)),
+                       active_mean=float(batch['active'].float().sum(1).mean()))
         return metrics
 
     def state_dict(self):

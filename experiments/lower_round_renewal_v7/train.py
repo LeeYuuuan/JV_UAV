@@ -39,7 +39,8 @@ def configure_reward(cfg, *, resume=False, **overrides):
         if resume and not equal:
             raise ValueError(f'resume reward mismatch: {key}={saved}, requested {value}; start a fresh run')
         cfg['reward'][key]=value
-    cfg['revision']=FORMAT
+    cfg.setdefault('age_normalization', 'bounded')
+    cfg['revision']=FORMAT+'_bounded_age'
     return cfg
 
 
@@ -84,6 +85,8 @@ def validate(cfg, world):
         raise ValueError('eval_steps must be positive')
     if cfg['age_scale_sec']<=0 or cfg['reward']['return_distance_scale_m']<=0:
         raise ValueError('invalid normalization scale')
+    if cfg.get('age_normalization') != 'bounded':
+        raise ValueError('new training requires bounded age normalization; start a fresh run')
     if cfg['reward']['energy_deficit_scale_soc']<=0 or cfg['reward']['energy_deficit_weight']<0:
         raise ValueError('invalid linear energy-deficit settings')
     sac = cfg['sac']
@@ -155,6 +158,8 @@ class Trainer:
         state=torch.load(path,map_location='cpu',weights_only=False)
         if state.get('format')!=FORMAT:raise ValueError('checkpoint belongs to another experiment')
         if 'replay' not in state:raise ValueError('policy snapshots are for evaluation; resume from checkpoint.pt')
+        if state['cfg'].get('age_normalization') != 'bounded':
+            raise ValueError('legacy linear-age checkpoint cannot resume bounded-age training; start a fresh run')
         obj=cls(state['world'],state['cfg'],device)
         obj.env.load_state_dict(state['env']);obj.sac.load_state_dict(state['sac'])
         obj.replay=state['replay'];obj.behavior_rng.bit_generator.state=state['behavior_rng']
@@ -224,7 +229,7 @@ def provenance(output,trainer,args):
     write_json(folder/'manifest.json',dict(revision=trainer.cfg['revision'],checkpoint_format=FORMAT,files_sha256=manifest,
                arguments={k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
                torch=torch.__version__,device=str(trainer.sac.device),starting_steps=trainer.steps,
-               description='V7: full-map renewal-round reward with bounded progress/goal potential; continuing sensor/mask state across300-step reporting chunks.'))
+               description='V7 bounded-age: every network age input is age/(age+6000s); no ranking. Full-map renewal reward, continuous sensor/mask state.'))
     write_json(folder/'resolved_config.json',dict(environment=trainer.world,training=trainer.cfg))
 
 
@@ -274,6 +279,7 @@ def main():
     provenance(output,trainer,args)
     end=trainer.steps+(args.steps or cfg['total_steps']);started=time.monotonic()
     print(f"{cfg['revision']} | device={device} | additional steps={end-trainer.steps} | output={output}",flush=True)
+    print(f"Age input: age/(age+{cfg['age_scale_sec']}s) | mode={cfg['age_normalization']} | fresh actor and critic required for legacy runs",flush=True)
     print(f"gamma={cfg['sac']['gamma']} | round_reward={cfg['reward']['round_reward']} | Phi={cfg['reward']['progress_weight']}*progress+{cfg['reward']['navigation_weight']}*closeness | continuing task,300-step reports | eval horizon={cfg['eval_steps']}",flush=True)
     print(f"Linear energy cost: weight={cfg['reward']['energy_deficit_weight']} per deficit scale={cfg['reward']['energy_deficit_scale_soc']} SOC | one-time failure={cfg['reward']['return_failure_per_uav']} + {cfg['reward']['return_distance_weight']}*distance/{cfg['reward']['return_distance_scale_m']}",flush=True)
     if trainer.steps==0:

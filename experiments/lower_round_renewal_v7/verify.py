@@ -66,6 +66,22 @@ def run():
     e=env();agent=SAC(e,cfg['sac'],'cpu');o=e.observation();packed=agent.pack([o])
     assert packed['age'].shape==(1,2*e.m+1) and 'backlog' not in o
     assert np.array_equal(packed['age'][0,e.m:2*e.m].numpy(),o['round_visited'])
+    # All three age paths share the same bounded map, without changing the raw observation.
+    test=copy.deepcopy(o)
+    test['age'][:]=6000.;test['assigned_age'][:]=6000.;test['target_age'][:]=6000.
+    bounded=agent.pack([test])
+    assert np.allclose(bounded['age'][0,:e.m].numpy(),.5)
+    assert np.allclose(bounded['uav'][0,:,12].numpy(),.5)
+    assert np.allclose(bounded['targets'][0,:,2].numpy(),.5)
+    assert np.all(test['age']==6000.) and np.all(e.age==o['age'])
+    assert np.allclose(agent.normalize_age([0.,6000.,6000000.]),[0.,.5,1000/1001])
+    for field in ('age','assigned_age','target_age'):test[field][:]=1e12
+    huge=agent.pack([test])
+    for values in (huge['age'][0,:e.m],huge['uav'][0,:,12],huge['targets'][0,:,2]):
+        assert torch.isfinite(values).all() and (values>=0).all() and (values<=1).all()
+    # Legacy snapshots still evaluate with the original linear encoding.
+    legacy=env();legacy.cfg.pop('age_normalization',None)
+    old=SAC(legacy,cfg['sac'],'cpu');assert np.allclose(old.normalize_age([6000.,6000000.]),[1.,1000.])
     e.status[:]=Status.CHARGING;empty=e.observation()
     actions,lp=agent.actor(agent.pack([o,empty]));assert torch.isfinite(actions).all() and torch.all(actions[1]==0) and lp[1]==0
     transitions=[(o,np.zeros((len(o['ids']),2),np.float32),1.,empty,False),
@@ -110,9 +126,14 @@ def run():
         restored=Trainer.load(file,'cpu');b,sources2,_=restored.behavior(restored.env.observation());actual=restored.env.step(b)
         assert sources==sources2 and np.array_equal(a,b) and expected[1]==actual[1]
         for k in expected[0]:assert np.array_equal(expected[0][k],actual[0][k])
+        state=torch.load(file,map_location='cpu',weights_only=False);state['cfg'].pop('age_normalization')
+        old_file=Path(tmp)/'legacy.pt';torch.save(state,old_file)
+        try:Trainer.load(old_file,'cpu')
+        except ValueError as exc:assert 'legacy linear-age' in str(exc)
+        else:raise AssertionError('legacy normalization accepted on resume')
     try:configure_reward(cfg,resume=True,round_reward=10.)
     except ValueError:pass
     else:raise AssertionError('changed reward accepted on resume')
-    print('PASS: round union/anti-repeat/completion, pending goals,20/300 continuity, telescoping, mask inputs, physical safety, SAC and exact resume')
+    print('PASS: round physics/rewards, bounded age on all three input paths, legacy evaluation/resume guard, SAC and exact resume')
 
 if __name__=='__main__':run()

@@ -4,6 +4,29 @@ Independent experiment/checkpoint format: `displacement_round_renewal_v7`.
 Fresh training required; v1-v6 snapshots/replay are rejected. No long job is
 started by installation/tests. V5 and its P8 run are preserved unchanged.
 
+## Bounded age input revision
+
+New runs record revision `displacement_round_renewal_v7_bounded_age` and
+`age_normalization: bounded`. Every network age feature uses
+`age / (age + age_scale_sec)`, with `age_scale_sec=6000` seconds (100 steps).
+This applies to the global sensor ages, assigned-goal age in each UAV token,
+and target-context ages. No rank feature is added; all dimensions are unchanged.
+Raw ages in the environment, oldest-goal assignment and trace diagnostics remain
+in seconds. Reward, physics, gamma and exploration settings are unchanged.
+
+Actor inputs: six14-dimensional fleet tokens (normalized position2, SOC1, ID1,
+status one-hot6, relative assigned-goal position2, bounded assigned age1, goal
+validity1); up to six padded target tokens (normalized x/y and bounded age),
+global301-vector (150 bounded ages,150 round-visited bits, round progress1),
+and cycle phase `(step % 20)/20`. Serving IDs/masks select which UAVs emit actions.
+Critic uses the same state plus the joint six-by-two action, zero for non-serving
+UAVs, and produces one team Q value per twin network. Actual backlog is not input.
+
+Legacy v7 snapshots without the normalization flag still evaluate using the old
+linear age/6000 representation. They cannot resume new bounded-age training:
+start a fresh actor/critic/replay and a new output folder. New bounded-age runs
+can resume normally, preserving their encoding in checkpoint configuration.
+
 ## Global task and anti-repeat rule
 
 At fresh task start all150 sensors are pending. A real collection marks each
@@ -66,7 +89,7 @@ seed43, batch256, LR3e-4, tau0.005, auto alpha starting0.05, update each step fr
 After local commit/push and server pull:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_round_renewal_v7/train.py --device cuda --steps 900000 --output runs/round_renewal_v7_seed43
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_round_renewal_v7/train.py --device cuda --steps 900000 --output runs/round_renewal_v7_bounded_age_seed43
 ```
 
 900k steps =3000 report blocks of300. Eval every6000 training steps, on three
@@ -77,7 +100,7 @@ flushed. Config/source hashes and compressed traces are saved.
 Resume for an ADDITIONAL budget, with unchanged saved settings:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_round_renewal_v7/train.py --device cuda --resume runs/round_renewal_v7_seed43/checkpoint.pt --steps 300000 --output runs/round_renewal_v7_seed43
+CUDA_VISIBLE_DEVICES=0 python3 -u experiments/lower_round_renewal_v7/train.py --device cuda --resume runs/round_renewal_v7_bounded_age_seed43/checkpoint.pt --steps 300000 --output runs/round_renewal_v7_bounded_age_seed43
 ```
 
 ## Outputs and checks
@@ -93,8 +116,8 @@ Training/loss/eval figures overwrite the same files. No reset-flight lines.
 
 ```bash
 python3 experiments/lower_round_renewal_v7/verify.py
-python3 scripts/pack_lower_review.py runs/round_renewal_v7_seed43
-python3 experiments/lower_round_renewal_v7/evaluate.py --checkpoint runs/round_renewal_v7_seed43/policy_best_rounds.pt --steps 600 --device cuda --output runs/round_renewal_v7_best_rounds_eval
+python3 scripts/pack_lower_review.py runs/round_renewal_v7_bounded_age_seed43
+python3 experiments/lower_round_renewal_v7/evaluate.py --checkpoint runs/round_renewal_v7_bounded_age_seed43/policy_best_rounds.pt --steps 600 --device cuda --output runs/round_renewal_v7_bounded_age_best_rounds_eval
 ```
 
 The test suite checks repeat farming, union counting, completion and next-round

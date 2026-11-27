@@ -16,8 +16,10 @@ def worker(run,root):
     revision=resolved['training']['revision']
     if revision.startswith('displacement_backlog_potential_v5'):
         folder='lower_backlog_potential_v5'
-    elif revision=='displacement_round_renewal_v7':
+    elif revision.startswith('displacement_round_renewal_v7'):
         folder='lower_round_renewal_v7'
+    elif revision.startswith('displacement_pnorm_ablation_v8'):
+        folder='lower_pnorm_ablation_v8'
     else:raise ValueError(f'Unsupported experiment revision: {revision}')
     sys.path.insert(0,str(root/'src'));sys.path.insert(0,str(root/'experiments'/folder))
     # The checkpoint's Replay object is pickled under its original agent module.
